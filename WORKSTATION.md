@@ -12,7 +12,7 @@ Workspace restoration follows Mutter's current workspace policy and the intended
 
 ## Build, installation and validation
 
-The build requires Node.js 22 or newer, npm and the native `glib-compile-schemas` command. Install the locked development dependencies with `npm ci --ignore-scripts`, run `npm run check` for strict type checking, then `npm run build`. The compiler and GNOME declarations are pinned in `package-lock.json`. The narrow `types/window-menu.d.ts` declaration covers the internal Shell window-menu module. Native GNOME 51 integration tests validate the declarations against the installed APIs.
+The build requires Node.js 22 or newer, npm and the native `glib-compile-schemas` command. Python 3 supplies the installation/archive helpers. Install the locked development dependencies with `npm ci --ignore-scripts`, run `npm run check` for strict type checking, then `npm run build`. The compiler and GNOME declarations are pinned in `package-lock.json`. The narrow `types/window-menu.d.ts` declaration covers the internal Shell window-menu module. Native GNOME 51 integration tests validate the declarations against the installed APIs.
 
 `dist/` contains the generated JavaScript, metadata, icons, license and compiled schema. It and `node_modules/` remain outside Git; TypeScript is the only maintained implementation source. The build preserves the GNOME import paths and runtime class fields. Preferences implement the asynchronous native entry point. Rules and private profiles retain their native GSettings format.
 

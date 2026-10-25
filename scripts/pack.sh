@@ -1,39 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SRC_DIR="$PROJECT_ROOT/dist"
-npm --prefix "$PROJECT_ROOT" run build
-ZIP_NAME="$PROJECT_ROOT/temp/deja-window.zip"
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+npm --prefix "$project_root" run build
+python - "$project_root" <<'PY'
+from pathlib import Path
+import sys
+from zipfile import ZIP_DEFLATED, ZipFile
 
-# Create temp directory if it doesn't exist
-mkdir -p "$PROJECT_ROOT/temp"
-
-# Remove existing zip if it exists
-if [ -f "$ZIP_NAME" ]; then
-    rm "$ZIP_NAME"
-fi
-
-echo "📦 Packaging from $SRC_DIR..."
-
-# Zip the extension files from src
-# -r: recurse into directories
-cd "$SRC_DIR" || exit
-# deja-window.png is excluded on purpose: it's the full-color logo used only
-# for the extensions.gnome.org listing, not loaded by the extension at runtime.
-zip -r "$ZIP_NAME" extension.js \
-    metadata.json \
-    prefs.js \
-    windowMenu.js \
-    schemas/org.gnome.shell.extensions.deja-window.gschema.xml \
-    schemas/gschemas.compiled \
-    icons/deja-window-symbolic.png \
-    icons/globe-symbolic.svg
-
-# Add README.md from root
-echo "📄 Adding README.md..."
-cd "$PROJECT_ROOT" || exit
-zip -g "$ZIP_NAME" README.md LICENSE
-
-echo "✅ Created $ZIP_NAME"
-
+root = Path(sys.argv[1])
+archive = root / "temp/deja-window.zip"
+archive.parent.mkdir(exist_ok=True)
+with ZipFile(archive, "w", compression=ZIP_DEFLATED) as output:
+    for source in sorted((root / "dist").rglob("*")):
+        if source.is_file():
+            output.write(source, source.relative_to(root / "dist"))
+    output.write(root / "README.md", "README.md")
+print("Created " + str(archive))
+PY
