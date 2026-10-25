@@ -483,7 +483,7 @@ export default class DejaWindowExtension extends Extension {
         // Tab list is MRU-ordered, so the first match is the window the user most
         // recently interacted with — the one they mean by "the current window".
         const window = global.display.get_tab_list(Meta.TabList.NORMAL, null)
-            .find(w => this._isValidManagedWindow(w) && this._windowMatchesConfig(config, w));
+            .find(w => this._isMainWindowCandidate(w) && this._windowMatchesConfig(config, w));
 
         reply(this.captureWindowState(window, config.wm_class) ? 'saved' : 'no-window');
     }
@@ -496,17 +496,17 @@ export default class DejaWindowExtension extends Extension {
     // round-trip. Returns false if the window can't be snapshotted.
     captureWindowState(window, identity) {
         if (!window || !identity || !window.get_workspace()) return false;
-        if (!this._isValidManagedWindow(window) || !window.get_wm_class()) return false;
+        // An explicit capture uses the selected normal window even when automatic
+        // tracking remembers it as secondary. Capturing does not change that role.
+        if (!this._isMainWindowCandidate(window) || !window.get_wm_class()) return false;
 
         const rect = window.get_frame_rect();
         // GNOME side tiling sets only the vertical axis; both axes mean maximized.
         const isMaximized = window.is_maximized();
         const workspaceIndex = window.get_workspace().index();
 
-        this._performSave(identity, window.get_monitor(), rect.x, rect.y, rect.width, rect.height,
+        return this._performSave(identity, window.get_monitor(), rect.x, rect.y, rect.width, rect.height,
             CAPTURE_ALL_FLAGS, isMaximized, workspaceIndex, window.minimized, window.above, window.on_all_workspaces);
-
-        return true;
     }
 
     // Helper to record a new WM_CLASS in the known-wm-classes setting
@@ -1024,7 +1024,7 @@ export default class DejaWindowExtension extends Extension {
 
     // Saves the current window geometry to GSettings for persistence across sessions.
     _performSave(identity, monitorIndex, x, y, w, h, config, isMaximized, workspaceIndex, minimized, above, sticky) {
-        if (!this._settings || GLib.get_monotonic_time() < this._layoutSaveAfter) return;
+        if (!this._settings || GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
 
         debug(`[DejaWindow] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
 
@@ -1100,8 +1100,9 @@ export default class DejaWindowExtension extends Extension {
             layouts[layoutKey] = layoutState;
             // Native preferences can still display the most recently captured state.
             savedStates[identity] = { ...layoutState, layouts };
-            this._settings.set_string('window-app-states', JSON.stringify(savedStates));
+            return this._settings.set_string('window-app-states', JSON.stringify(savedStates));
         }
+        return true;
     }
 
     // Centers the window on the current monitor's work area.
