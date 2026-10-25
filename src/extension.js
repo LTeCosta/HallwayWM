@@ -485,7 +485,11 @@ export default class DejaWindowExtension extends Extension {
         const window = global.display.get_tab_list(Meta.TabList.NORMAL, null)
             .find(w => this._isMainWindowCandidate(w) && this._windowMatchesConfig(config, w));
 
-        reply(this.captureWindowState(window, config.wm_class) ? 'saved' : 'no-window');
+        if (!window) {
+            reply('no-window');
+            return;
+        }
+        reply(this.captureWindowState(window, config.wm_class) ? 'saved' : 'save-failed');
     }
 
     // Snapshots a specific window's current geometry/state into

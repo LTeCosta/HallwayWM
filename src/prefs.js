@@ -820,6 +820,10 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             cancelCaptureTimeout();
             settings.set_string('capture-state-request', '');
 
+            if (reply.status === 'save-failed') {
+                showToast(`Could not save the current window state for “${reply.wm_class}”. Try again after the display layout settles.`);
+                return;
+            }
             if (reply.status !== 'saved') {
                 showToast(reply.status === 'no-window'
                     ? `No open window matches “${reply.wm_class}”.`
