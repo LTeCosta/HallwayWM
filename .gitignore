@@ -1,3 +1,7 @@
 temp
 .idea/
 CLAUDE.md
+
+# Generated schema and local package outputs.
+src/schemas/gschemas.compiled
+temp/

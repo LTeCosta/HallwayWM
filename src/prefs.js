@@ -113,7 +113,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         });
         const group = new Adw.PreferencesGroup({
             title: 'Application Configuration',
-            description: 'Add windows to manage.'
+            description: 'Manage the first normal window of each application. Dialogs and additional windows keep their own placement.'
         });
         page.add(group);
 
@@ -910,7 +910,8 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         // -- List Section --
         const listGroup = new Adw.PreferencesGroup({
-            title: 'Managed Windows'
+            title: 'Application Rules',
+            description: 'Individual overrides for main windows. Applications using Global Defaults do not need a rule here.'
         });
         page.add(listGroup);
 
@@ -1175,7 +1176,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         const globalDefaultsGroup = new Adw.PreferencesGroup({
             title: 'Global Defaults',
-            description: 'Applied automatically to every normal window with no rule above. A rule above always takes priority.'
+            description: 'Applied automatically to the main window of each application with no individual rule. Individual rules take priority.'
         });
         defaultsPage.add(globalDefaultsGroup);
 
@@ -1240,7 +1241,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             // user has already tested via an explicit per-app rule.
             const enabledRow = new Adw.ActionRow({
                 title: 'Enabled',
-                subtitle: 'Manage every normal window that has no rule above (experimental)'
+                subtitle: 'Manage each application’s main window without an individual rule (experimental)'
             });
             const enabledSwitch = new Gtk.Switch({ active: defaults.enabled, valign: Gtk.Align.CENTER });
             let suppressToggle = false;
@@ -1256,7 +1257,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
                 const dialog = new Adw.MessageDialog({
                     heading: 'Enable Global Defaults?',
-                    body: 'This will manage every normal window of every application that doesn’t already have its own rule above. It is an experimental feature. Some apps may not handle programmatic resizing or repositioning well and could become unstable. You can add misbehaving apps to the exclude list below at any time.',
+                    body: 'This will manage the first normal window of every application that doesn’t already have its own rule. Dialogs and additional windows keep their own placement. It is an experimental feature. Some apps may not handle programmatic resizing or repositioning well and could become unstable. You can add misbehaving apps to the exclude list below at any time.',
                     transient_for: window,
                     modal: true
                 });

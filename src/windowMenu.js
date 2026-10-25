@@ -57,7 +57,7 @@ function ellipsize(text) {
 
 /**
  * Adds a "Deja Window" submenu to GNOME Shell's window menu (the menu shown
- * from the title bar's right-click / Super+Space), mirroring how extensions
+ * from the title bar's right-click / Alt+Space), mirroring how extensions
  * like Tiling Shell inject items: wrap WindowMenu.prototype._buildMenu so the
  * original menu is built first, then append our own items.
  *
@@ -206,6 +206,9 @@ export class DejaWindowMenu {
     }
 
     _appendSubmenu(menu, window) {
+        // Normal windows can edit application rules independently of which
+        // window is selected for placement restoration and state capture.
+        if (!this._extension._isMainWindowCandidate(window)) return;
         const wmClass = window.get_wm_class();
         const title = window.get_title();
         if (!wmClass && !title) return;

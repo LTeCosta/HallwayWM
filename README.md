@@ -1,3 +1,7 @@
+# Workstation build
+
+The `workstation` branch maintains the GNOME 51 build installed as `deja-window@workstation.local`. See [workstation operation and provenance](WORKSTATION.md). The upstream history is retained.
+
 # **Deja Window**
 
 **Deja Window** is a GNOME Shell extension that gives you full control over your window geometry. It automatically restores the workspace, size, position, minimized and maximized state, always on top and always on visible workspace of specific applications when they open.

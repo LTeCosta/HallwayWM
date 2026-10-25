@@ -31,7 +31,7 @@ zip -r "$ZIP_NAME" extension.js \
 # Add README.md from root
 echo "📄 Adding README.md..."
 cd "$PROJECT_ROOT" || exit
-zip -g "$ZIP_NAME" README.md
+zip -g "$ZIP_NAME" README.md LICENSE
 
 echo "✅ Created $ZIP_NAME"
 

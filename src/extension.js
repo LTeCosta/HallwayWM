@@ -1,3 +1,6 @@
+// Workstation modifications, 2026-10-23 and 2026-10-24: restore workspace before geometry,
+// persist monitor-layout profiles and coordinate KVM transitions with Window State Manager.
+
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -67,6 +70,12 @@ export default class DejaWindowExtension extends Extension {
         // Cache for configurations to avoid parsing JSON on every window creation
         this._configs = [];
         this._globalDefaults = {};
+        this._layoutSaveAfter = 0;
+        this._layoutRestoreId = 0;
+        // Retain weak window identities across lock/unlock adoption.
+        this._windowLayouts ??= new WeakMap();
+        // A secondary window keeps its role through settings changes and unlocks.
+        this._secondaryWindows ??= new WeakSet();
         this._updateConfigs();
         this._updateGlobalDefaults();
 
@@ -129,8 +138,8 @@ export default class DejaWindowExtension extends Extension {
 
         this._adoptIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             this._adoptIdleId = 0;
-            // Meta.TabList.NORMAL includes standard managed windows (filters out O-R windows usually)
-            const windows = global.display.get_tab_list(Meta.TabList.NORMAL, null);
+            // Include transient surfaces so their secondary role survives parent closure.
+            const windows = global.get_window_actors().map(actor => actor.meta_window);
             // Read by _setupListeners for the windows adopted in this loop only.
             this._adoptWithoutRestore = adoptWithoutRestore;
             for (const window of windows) {
@@ -139,6 +148,17 @@ export default class DejaWindowExtension extends Extension {
             this._adoptWithoutRestore = false;
             return GLib.SOURCE_REMOVE;
         });
+
+        // Let Mutter and Window State Manager settle after KVM topology changes.
+        Main.layoutManager.connectObject('monitors-changed', () => {
+            this._layoutSaveAfter = GLib.get_monotonic_time() + 5 * 1000 * 1000;
+            if (this._layoutRestoreId) GLib.source_remove(this._layoutRestoreId);
+            this._layoutRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+                this._layoutRestoreId = 0;
+                this._restoreNewLayouts();
+                return GLib.SOURCE_REMOVE;
+            });
+        }, this);
 
         // Initialize probes map
         this._probes = new Map();
@@ -170,6 +190,11 @@ export default class DejaWindowExtension extends Extension {
             this._settings.disconnectObject(this);
         }
         global.display.disconnectObject(this);
+        Main.layoutManager.disconnectObject(this);
+        if (this._layoutRestoreId) {
+            GLib.source_remove(this._layoutRestoreId);
+            this._layoutRestoreId = 0;
+        }
 
         this._destroyIndicator();
 
@@ -308,7 +333,7 @@ export default class DejaWindowExtension extends Extension {
     // Defaults are enabled/edited at runtime, so already-open windows don't
     // require an extension reload to start being managed.
     _adoptUnmanagedWindows() {
-        const windows = global.display.get_tab_list(Meta.TabList.NORMAL, null);
+        const windows = global.get_window_actors().map(actor => actor.meta_window);
         for (const window of windows) {
             if (this._handles.has(window)) continue;
             this._checkAndSetup(window);
@@ -334,6 +359,34 @@ export default class DejaWindowExtension extends Extension {
         }
     }
 
+    // Logical rectangles distinguish the docked and notebook-only KVM layouts.
+    _layoutKey() {
+        return JSON.stringify(Main.layoutManager.monitors.map(monitor =>
+            [monitor.x, monitor.y, monitor.width, monitor.height]));
+    }
+
+    // Window State Manager owns layouts already visited by a live window.
+    // A window opened while the LG is absent has no live docked state yet;
+    // use its persisted app profile on the first visit to that layout.
+    _restoreNewLayouts() {
+        if (!this._functionalityEnabled || !this._settings) return;
+        const layoutKey = this._layoutKey();
+        let states;
+        try {
+            states = JSON.parse(this._settings.get_string('window-app-states')) || {};
+        } catch (e) {
+            return;
+        }
+        for (const [window, handle] of this._handles) {
+            if (handle.visitedLayouts.has(layoutKey)) continue;
+            handle.visitedLayouts.add(layoutKey);
+            const effective = this._getEffectiveConfig(window);
+            if (!effective || !states[effective.identity]?.layouts?.[layoutKey]) continue;
+            handle.isRestoreApplied = false;
+            this._applySavedState(window, effective.identity, effective.config);
+        }
+    }
+
     // Helper to find a matching config for a given Window
     _getConfigForWindow(window) {
         if (!window) return null;
@@ -350,7 +403,7 @@ export default class DejaWindowExtension extends Extension {
     // fallback case (never a fixed value on the defaults object itself), so each
     // app still gets its own slot in window-app-states instead of colliding.
     _getEffectiveConfig(window) {
-        if (!window) return null;
+        if (!this._isValidManagedWindow(window) || !window.get_wm_class()) return null;
 
         const explicit = this._getConfigForWindow(window);
         if (explicit) {
@@ -443,9 +496,11 @@ export default class DejaWindowExtension extends Extension {
     // round-trip. Returns false if the window can't be snapshotted.
     captureWindowState(window, identity) {
         if (!window || !identity || !window.get_workspace()) return false;
+        if (!this._isValidManagedWindow(window) || !window.get_wm_class()) return false;
 
         const rect = window.get_frame_rect();
-        const isMaximized = window.maximized_horizontally || window.maximized_vertically;
+        // GNOME side tiling sets only the vertical axis; both axes mean maximized.
+        const isMaximized = window.is_maximized();
         const workspaceIndex = window.get_workspace().index();
 
         this._performSave(identity, window.get_monitor(), rect.x, rect.y, rect.width, rect.height,
@@ -512,16 +567,32 @@ export default class DejaWindowExtension extends Extension {
         this._handles.delete(window);
     }
 
-    // Helper to check if a window is valid for management (NOT override_redirect)
-    _isValidManagedWindow(window) {
-        // Skip override_redirect windows (tooltips, dnd, menus, etc)
-        // This prevents "assertion '!window->override_redirect' failed" errors
-        if (window.is_override_redirect()) return false;
+    _isMainWindowCandidate(window) {
+        return window && !window.is_override_redirect() &&
+            window.get_window_type() === Meta.WindowType.NORMAL &&
+            !window.get_transient_for() && !window.is_skip_taskbar();
+    }
 
-        // Optionally, ensure it is a normal window type (or Dialog/Utility if desired)
-        // Meta.WindowType.NORMAL = 0
-        const type = window.get_window_type();
-        if (type !== Meta.WindowType.NORMAL && type !== Meta.WindowType.DIALOG && type !== Meta.WindowType.UTILITY) {
+    // WM_CLASS is also the identity used by automatic application profiles.
+    // Select by creation order, not focus order, when adopting existing windows.
+    _isValidManagedWindow(window) {
+        if (!window || this._secondaryWindows.has(window)) return false;
+        if (!this._isMainWindowCandidate(window)) {
+            this._secondaryWindows.add(window);
+            return false;
+        }
+
+        const wmClass = window.get_wm_class();
+        // Creation may precede WM_CLASS; keep the property probe eligible.
+        if (!wmClass) return true;
+
+        const sequence = window.get_stable_sequence();
+        const hasEarlierWindow = global.display.get_tab_list(Meta.TabList.NORMAL, null)
+            .some(other => other !== window &&
+                this._isMainWindowCandidate(other) && !this._secondaryWindows.has(other) &&
+                other.get_wm_class() === wmClass && other.get_stable_sequence() < sequence);
+        if (hasEarlierWindow) {
+            this._secondaryWindows.add(window);
             return false;
         }
         return true;
@@ -612,7 +683,11 @@ export default class DejaWindowExtension extends Extension {
 
         debug('[DejaWindow] Setup listeners for:', identity);
 
+        const visitedLayouts = this._windowLayouts.get(window) || new Set();
+        visitedLayouts.add(this._layoutKey());
+        this._windowLayouts.set(window, visitedLayouts);
         const handle = {
+            visitedLayouts,
             timeoutId: 0,               // Store timeout ID
             wsTimeoutId: 0,             // Store workspace timeout ID
             restoreIdleId: 0,           // Store the pending restore idle ID
@@ -688,11 +763,12 @@ export default class DejaWindowExtension extends Extension {
             // Bypassed: no saving while the logical switch is off.
             if (!this._functionalityEnabled) return;
 
+            if (this._releaseIfIneligible(window)) return;
+
             // If we haven't finished the initial restore, don't save anything!
             // Avoid overwriting saved state with partial coordinates during opening.
             if (!handle.isRestoreApplied) return;
 
-            const rect = window.get_frame_rect();
             if (handle.timeoutId) {
                 GLib.source_remove(handle.timeoutId);
                 handle.timeoutId = 0;
@@ -704,8 +780,11 @@ export default class DejaWindowExtension extends Extension {
 
             // Schedule a timeout to save the window's state
             handle.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+                if (this._releaseIfIneligible(window)) return GLib.SOURCE_REMOVE;
                 debug('[DejaWindow] Window changed (debounced):', identity);
-                const isMaximized = window.maximized_horizontally || window.maximized_vertically;
+                // Capture geometry and flags together after Wayland has settled.
+                const rect = window.get_frame_rect();
+                const isMaximized = window.is_maximized();
 
                 // Get additional states
                 const workspace = window.get_workspace();
@@ -726,7 +805,7 @@ export default class DejaWindowExtension extends Extension {
             // Last save before closing (skipped while bypassed)
             if (this._functionalityEnabled && handle.isRestoreApplied) {
                 const rect = window.get_frame_rect();
-                const isMaximized = window.maximized_horizontally || window.maximized_vertically;
+                const isMaximized = window.is_maximized();
 
                 // Get additional states
                 const workspace = window.get_workspace();
@@ -752,6 +831,7 @@ export default class DejaWindowExtension extends Extension {
         window.connectObject('notify::above', () => handleWindowChange(window), this);
         window.connectObject('notify::on-all-workspaces', () => handleWindowChange(window), this);
         window.connectObject('notify::window-type', () => this._releaseIfIneligible(window), this);
+        window.connectObject('notify::transient-for', () => this._releaseIfIneligible(window), this);
     }
 
     // Applies the saved size and/or position, or falls back to centering if position is invalid/not requested.
@@ -777,9 +857,11 @@ export default class DejaWindowExtension extends Extension {
             // Final Safety Check: Avoid Override Redirect windows
             if (window.is_override_redirect()) return GLib.SOURCE_REMOVE;
 
-            // Double check actor mapping just to be absolutely sure
+            // A mapped actor can become hidden before this idle runs, for example
+            // during Chromium startup or on another workspace. Its Meta.Window is
+            // still managed and can receive geometry while the actor is hidden.
             const actor = window.get_compositor_private();
-            if (!actor || !actor.mapped) {
+            if (!actor) {
                 debug(`[DejaWindow] Window ${identity} actor not ready in idle, skipping...`);
                 return GLib.SOURCE_REMOVE;
             }
@@ -806,7 +888,7 @@ export default class DejaWindowExtension extends Extension {
             }
 
             // Get saved state for this window
-            const state = savedStates[identity] || {};
+            const state = savedStates[identity]?.layouts?.[this._layoutKey()] || {};
             debug('[DejaWindow] Restoring state for:', identity, state);
             // Safety checks for X11
             if (!state) return GLib.SOURCE_REMOVE;
@@ -825,7 +907,7 @@ export default class DejaWindowExtension extends Extension {
 
             // Before we can determine the work area, we need to make sure the window is located on the correct monitor.
             // So, if we are restoring position, then check and move to the saved monitor.
-            const targetMonitor = state.monitor ?? 0;
+            const targetMonitor = state.monitor ?? window.get_monitor();
             // The saved monitor index may no longer exist (monitor unplugged, layout changed since last save).
             // Passing an out-of-range index to move_to_monitor() hits a fatal assertion in Mutter and crashes
             // the whole gnome-shell process, so it must be validated against the currently connected monitors.
@@ -838,7 +920,10 @@ export default class DejaWindowExtension extends Extension {
             // Retrieve target position
             let targetX = rect.x;
             let targetY = rect.y;
-            const monitorIndex = window.get_monitor();
+            // Wayland can update get_monitor() after this move returns. Clamp against
+            // the intended monitor, rather than the previous monitor's work area.
+            const monitorIndex = config.restore_pos && targetMonitor >= 0 &&
+                targetMonitor < global.display.get_n_monitors() ? targetMonitor : window.get_monitor();
             const workspace = window.get_workspace();
             if (!workspace) return GLib.SOURCE_REMOVE;
 
@@ -868,19 +953,7 @@ export default class DejaWindowExtension extends Extension {
 
             debug(`[DejaWindow] Applying State for ${identity}: ${targetW}x${targetH} @ ${targetX},${targetY}`);
 
-            const isMaximized = window.maximized_horizontally || window.maximized_vertically;
-
-            // If the window is already maximized and we are NOT configured to restore maximized state,
-            // we should not interfere (do not unmaximize, do not apply geometry).
-            // If we ARE configured to restore maximized state, we proceed to unmaximize and apply geometry
-            // so that the "underlying" normal state is correct.
-            if (!isMaximized || config.restore_maximized) {
-                if (isMaximized) {
-                    this._unmaximizeWindow(window);
-                }
-                // Apply geometry
-                window.move_resize_frame(true, targetX, targetY, targetW, targetH);
-            }
+            const hasMaximizedAxis = window.maximized_horizontally || window.maximized_vertically;
 
             // Restore Workspace
             if (config.restore_workspace && state.workspace !== undefined && state.workspace !== -1) {
@@ -907,6 +980,18 @@ export default class DejaWindowExtension extends Extension {
                         }
                     }
                 }
+            }
+
+            // If the window is already maximized and we are NOT configured to restore maximized state,
+            // we should not interfere (do not unmaximize, do not apply geometry).
+            // If we ARE configured to restore maximized state, we proceed to unmaximize and apply geometry
+            // so that the "underlying" normal state is correct.
+            if (!hasMaximizedAxis || config.restore_maximized) {
+                if (hasMaximizedAxis) {
+                    this._unmaximizeWindow(window);
+                }
+                // Apply geometry
+                window.move_resize_frame(false, targetX, targetY, targetW, targetH);
             }
 
             // Restore Always on Visible Workspace (Sticky)
@@ -939,7 +1024,7 @@ export default class DejaWindowExtension extends Extension {
 
     // Saves the current window geometry to GSettings for persistence across sessions.
     _performSave(identity, monitorIndex, x, y, w, h, config, isMaximized, workspaceIndex, minimized, above, sticky) {
-        if (!this._settings) return;
+        if (!this._settings || GLib.get_monotonic_time() < this._layoutSaveAfter) return;
 
         debug(`[DejaWindow] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
 
@@ -951,70 +1036,70 @@ export default class DejaWindowExtension extends Extension {
             savedStates = {};
         }
 
-        // Initialize state for this window if it doesn't exist
-        if (!savedStates[identity]) {
-            savedStates[identity] = {};
-        }
+        const layoutKey = this._layoutKey();
+        const layouts = savedStates[identity]?.layouts || {};
+        const layoutState = layouts[layoutKey] || {};
 
         let changed = false;
 
         // Save Workspace
-        if (config.restore_workspace && workspaceIndex !== -1 && savedStates[identity].workspace !== workspaceIndex) {
-            savedStates[identity].workspace = workspaceIndex;
+        if (config.restore_workspace && workspaceIndex !== -1 && layoutState.workspace !== workspaceIndex) {
+            layoutState.workspace = workspaceIndex;
             changed = true;
         }
         // Save Minimized
-        if (config.restore_minimized && savedStates[identity].minimized !== minimized) {
-            savedStates[identity].minimized = minimized;
+        if (config.restore_minimized && layoutState.minimized !== minimized) {
+            layoutState.minimized = minimized;
             changed = true;
         }
         // Save Above
-        if (config.restore_above && savedStates[identity].above !== above) {
-            savedStates[identity].above = above;
+        if (config.restore_above && layoutState.above !== above) {
+            layoutState.above = above;
             changed = true;
         }
         // Save Sticky
-        if (config.restore_sticky && savedStates[identity].sticky !== sticky) {
-            savedStates[identity].sticky = sticky;
+        if (config.restore_sticky && layoutState.sticky !== sticky) {
+            layoutState.sticky = sticky;
             changed = true;
         }
 
         // If we are restoring position and the monitor is different, then save the new monitor
-        if (config.restore_pos
-              && (monitorIndex !== 0 || savedStates[identity].monitor !== undefined)
-              && savedStates[identity].monitor !== monitorIndex) {
-            savedStates[identity].monitor = monitorIndex;
+        if (config.restore_pos && layoutState.monitor !== monitorIndex) {
+            layoutState.monitor = monitorIndex;
             changed = true;
         }
 
         // If maximized, we only save the maximized flag, NOT the current coordinates (which would be full screen).
         // Otherwise, we would overwrite the "normal" dimensions with the full-screen ones.
         if (isMaximized) {
-            if (config.restore_maximized && savedStates[identity].maximized !== true) {
-                savedStates[identity].maximized = true;
+            if (config.restore_maximized && layoutState.maximized !== true) {
+                layoutState.maximized = true;
                 changed = true;
             }
             // We don't save w/h/x/y when maximized to preserve the "unmaximized" state.
         } else {
             // If not maximized, we save dimensions and position and set maximized to false
-            if (config.restore_maximized && savedStates[identity].maximized !== false) {
-                savedStates[identity].maximized = false;
+            if (config.restore_maximized && layoutState.maximized !== false) {
+                layoutState.maximized = false;
                 changed = true;
             }
             if (config.restore_size && w > 50 && h > 50) {
-                savedStates[identity].width = w;
-                savedStates[identity].height = h;
+                layoutState.width = w;
+                layoutState.height = h;
                 changed = true;
             }
             if (config.restore_pos && x > -10000 && y > -10000) {
-                savedStates[identity].x = x;
-                savedStates[identity].y = y;
+                layoutState.x = x;
+                layoutState.y = y;
                 changed = true;
             }
         }
 
         // Save changes if any
         if (changed) {
+            layouts[layoutKey] = layoutState;
+            // Native preferences can still display the most recently captured state.
+            savedStates[identity] = { ...layoutState, layouts };
             this._settings.set_string('window-app-states', JSON.stringify(savedStates));
         }
     }
