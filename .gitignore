@@ -5,3 +5,8 @@ CLAUDE.md
 # Generated schema and local package outputs.
 src/schemas/gschemas.compiled
 temp/
+
+# TypeScript dependencies and generated deployment payload.
+node_modules/
+dist/
+*.tsbuildinfo

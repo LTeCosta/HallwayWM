@@ -10,10 +10,11 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { DejaWindowMenu } from './windowMenu.js';
+import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, RestoreFlags, WindowHandle, WindowRule} from './types.js';
 
 const DEBUG = false;
 
-function debug(...args) {
+function debug(...args: unknown[]) {
     if (DEBUG) console.log(...args);
 }
 
@@ -39,7 +40,7 @@ const CAPTURE_ALL_FLAGS = {
 // zip serves the whole 46–50 range declared in metadata.json.
 const MAXIMIZE_BOTH = 3;
 
-function maximizeArgs(method) {
+function maximizeArgs(method: {length: number}): [] | [number] {
     return typeof method === 'function' && method.length > 0 ? [MAXIMIZE_BOTH] : [];
 }
 
@@ -60,6 +61,22 @@ function maximizeArgs(method) {
  * - Refactored to use connectObject/disconnectObject for cleaner signal management.
  */
 export default class DejaWindowExtension extends Extension {
+    declare _settings: Gio.Settings | null;
+    declare _handles: Map<Meta.Window, WindowHandle>;
+    declare _configs: WindowRule[];
+    declare _globalDefaults: GlobalDefaults;
+    declare _layoutSaveAfter: number;
+    declare _layoutRestoreId: number;
+    declare _windowLayouts: WeakMap<Meta.Window, Set<string>>;
+    declare _secondaryWindows: WeakSet<Meta.Window>;
+    declare _functionalityEnabled: boolean;
+    declare _indicator: PanelMenu.Button | null;
+    declare _disabledByLock: boolean;
+    declare _adoptIdleId: number;
+    declare _adoptWithoutRestore: boolean;
+    declare _probes: Map<Meta.Window, number[]>;
+    declare _windowMenu: DejaWindowMenu | null;
+
     enable() {
         // Initialize settings from schema
         this._settings = this.getSettings();
@@ -81,9 +98,9 @@ export default class DejaWindowExtension extends Extension {
 
         // Logical bypass switch (top bar indicator menu): when false, the
         // extension stays enabled but all tracking/restore/save is a no-op.
-        this._functionalityEnabled = this._settings.get_boolean('functionality-enabled');
-        this._settings.connectObject('changed::functionality-enabled', () => {
-            this._functionalityEnabled = this._settings.get_boolean('functionality-enabled');
+        this._functionalityEnabled = this._settings!.get_boolean('functionality-enabled');
+        this._settings!.connectObject('changed::functionality-enabled', () => {
+            this._functionalityEnabled = this._settings!.get_boolean('functionality-enabled');
             if (this._functionalityEnabled) {
                 // Windows opened while bypassed were never adopted; pick them up now.
                 this._adoptUnmanagedWindows();
@@ -94,7 +111,7 @@ export default class DejaWindowExtension extends Extension {
         // below, a config change (e.g. rules added via the prefs Import feature)
         // can newly qualify already-open windows, so adopt those too instead of
         // only applying to windows opened from now on.
-        this._settings.connectObject('changed::window-app-configs', () => {
+        this._settings!.connectObject('changed::window-app-configs', () => {
             this._updateConfigs();
             this._adoptUnmanagedWindows();
         }, this);
@@ -102,26 +119,26 @@ export default class DejaWindowExtension extends Extension {
         // Listen for Global Defaults changes. Unlike window-app-configs, a defaults
         // change can newly qualify already-open windows that were previously
         // unmanaged, so also adopt those instead of waiting for a reload.
-        this._settings.connectObject('changed::window-global-defaults', () => {
+        this._settings!.connectObject('changed::window-global-defaults', () => {
             this._updateGlobalDefaults();
             this._adoptUnmanagedWindows();
         }, this);
 
         // One-shot "save current window state" requests coming from prefs.js
         // (separate process, no access to Meta windows). See _handleCaptureRequest.
-        this._settings.connectObject('changed::capture-state-request', () => {
+        this._settings!.connectObject('changed::capture-state-request', () => {
             this._handleCaptureRequest();
         }, this);
 
         // Top bar indicator, shown/hidden per the show-indicator preference
         this._indicator = null;
-        this._settings.connectObject('changed::show-indicator', () => {
+        this._settings!.connectObject('changed::show-indicator', () => {
             this._updateIndicator();
         }, this);
         this._updateIndicator();
 
         // Subscribe to the global 'window-created' event to detect new windows using connectObject
-        global.display.connectObject('window-created', (display, window) => {
+        global.display.connectObject('window-created', (display: Meta.Display, window: Meta.Window) => {
             this._onWindowCreated(window);
         }, this);
 
@@ -187,7 +204,7 @@ export default class DejaWindowExtension extends Extension {
 
         // Clean up global signals associated with this extension
         if (this._settings) {
-            this._settings.disconnectObject(this);
+            this._settings!.disconnectObject(this);
         }
         global.display.disconnectObject(this);
         Main.layoutManager.disconnectObject(this);
@@ -207,7 +224,7 @@ export default class DejaWindowExtension extends Extension {
         // Clean up probes
         if (this._probes) {
             for (const [window, ids] of this._probes) {
-                ids.forEach(id => {
+                ids!.forEach(id => {
                     window.disconnect(id);
                 });
             }
@@ -223,7 +240,7 @@ export default class DejaWindowExtension extends Extension {
     // --- TOP BAR INDICATOR ---
 
     _updateIndicator() {
-        const show = this._settings.get_boolean('show-indicator');
+        const show = this._settings!.get_boolean('show-indicator');
         if (show) {
             this._createIndicator();
         } else {
@@ -234,7 +251,7 @@ export default class DejaWindowExtension extends Extension {
     _createIndicator() {
         if (this._indicator) return;
 
-        const indicator = new PanelMenu.Button(0.0, this.metadata.name, false);
+        const indicator = new PanelMenu.Button(0.0, this.metadata.name, false) as PanelMenu.Button & {menu: PopupMenu.PopupMenu};
         const iconPath = GLib.build_filenamev([this.path, 'icons', 'deja-window-symbolic.png']);
         indicator.add_child(new St.Icon({
             gicon: Gio.icon_new_for_string(iconPath),
@@ -251,11 +268,11 @@ export default class DejaWindowExtension extends Extension {
         // actually disabling the extension, so the indicator and this menu
         // stay available to switch it back on.
         const enabledItem = new PopupMenu.PopupSwitchMenuItem('Active', this._functionalityEnabled);
-        enabledItem.connect('toggled', (_item, state) => {
-            this._settings.set_boolean('functionality-enabled', state);
+        enabledItem.connect('toggled', (_item: PopupMenu.PopupSwitchMenuItem, state: boolean) => {
+            this._settings!.set_boolean('functionality-enabled', state);
         });
-        this._settings.connectObject('changed::functionality-enabled', () => {
-            enabledItem.setToggleState(this._settings.get_boolean('functionality-enabled'));
+        this._settings!.connectObject('changed::functionality-enabled', () => {
+            enabledItem.setToggleState(this._settings!.get_boolean('functionality-enabled'));
         }, indicator);
         indicator.menu.addMenuItem(enabledItem);
 
@@ -272,19 +289,19 @@ export default class DejaWindowExtension extends Extension {
 
     // --- HELPER METHODS FOR API COMPATIBILITY ---
 
-    _maximizeWindow(window) {
-        window.maximize(...maximizeArgs(window.maximize));
+    _maximizeWindow(window: Meta.Window) {
+        (window.maximize as (direction?: number) => void)(...maximizeArgs(window.maximize));
     }
 
-    _unmaximizeWindow(window) {
-        window.unmaximize(...maximizeArgs(window.unmaximize));
+    _unmaximizeWindow(window: Meta.Window) {
+        (window.unmaximize as (direction?: number) => void)(...maximizeArgs(window.unmaximize));
     }
 
     // Helper to update configs from settings
     _updateConfigs() {
         try {
-            const json = this._settings.get_string('window-app-configs');
-            this._configs = JSON.parse(json) || [];
+            const json = this._settings!.get_string('window-app-configs');
+            this._configs = JSON.parse(json) as WindowRule[] || [];
         } catch (e) {
             console.error('[DejaWindow] Error parsing window-app-configs:', e);
             this._configs = [];
@@ -296,8 +313,8 @@ export default class DejaWindowExtension extends Extension {
     // Helper to update Global Defaults from settings
     _updateGlobalDefaults() {
         try {
-            const json = this._settings.get_string('window-global-defaults');
-            this._globalDefaults = JSON.parse(json) || {};
+            const json = this._settings!.get_string('window-global-defaults');
+            this._globalDefaults = JSON.parse(json) as GlobalDefaults || {};
         } catch (e) {
             console.error('[DejaWindow] Error parsing window-global-defaults:', e);
             this._globalDefaults = {};
@@ -321,7 +338,7 @@ export default class DejaWindowExtension extends Extension {
     // changed type after creation. Desktop shells such as DING map their windows as
     // NORMAL and turn them into DESKTOP/DOCK right after; restoring 'above' there
     // would lift a desktop surface over every application window.
-    _releaseIfIneligible(window) {
+    _releaseIfIneligible(window: Meta.Window) {
         if (this._isValidManagedWindow(window) && this._getEffectiveConfig(window)) return false;
 
         debug(`[DejaWindow] No longer managing: ${window.get_wm_class()} / ${window.get_title()}`);
@@ -335,7 +352,7 @@ export default class DejaWindowExtension extends Extension {
     _adoptUnmanagedWindows() {
         const windows = global.get_window_actors().map(actor => actor.meta_window);
         for (const window of windows) {
-            if (this._handles.has(window)) continue;
+            if (this._handles.has(window!)) continue;
             this._checkAndSetup(window);
         }
     }
@@ -344,7 +361,7 @@ export default class DejaWindowExtension extends Extension {
     // is_regex. Ignores the config's 'enabled' flag: callers that care about it
     // (like _getConfigForWindow) check it themselves, while the capture request
     // path deliberately matches disabled rules too.
-    _windowMatchesConfig(config, window) {
+    _windowMatchesConfig(config: MatchRule, window: Meta.Window) {
         const mode = config.match_mode || 'wm_class';
         const valueToCheck = mode === 'title' ? window.get_title() : window.get_wm_class();
         if (!valueToCheck) return false;
@@ -371,9 +388,9 @@ export default class DejaWindowExtension extends Extension {
     _restoreNewLayouts() {
         if (!this._functionalityEnabled || !this._settings) return;
         const layoutKey = this._layoutKey();
-        let states;
+        let states: ApplicationStates;
         try {
-            states = JSON.parse(this._settings.get_string('window-app-states')) || {};
+            states = JSON.parse(this._settings!.get_string('window-app-states')) || {};
         } catch (e) {
             return;
         }
@@ -388,7 +405,7 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Helper to find a matching config for a given Window
-    _getConfigForWindow(window) {
+    _getConfigForWindow(window: Meta.Window | null | undefined) {
         if (!window) return null;
 
         // A disabled rule is treated as if it didn't exist: same effect as
@@ -402,7 +419,7 @@ export default class DejaWindowExtension extends Extension {
     // Defaults object. Identity is always the window's own live wm_class in the
     // fallback case (never a fixed value on the defaults object itself), so each
     // app still gets its own slot in window-app-states instead of colliding.
-    _getEffectiveConfig(window) {
+    _getEffectiveConfig(window: Meta.Window) {
         if (!this._isValidManagedWindow(window) || !window.get_wm_class()) return null;
 
         const explicit = this._getConfigForWindow(window);
@@ -423,7 +440,7 @@ export default class DejaWindowExtension extends Extension {
     // Checks whether a window is excluded from Global Defaults via the
     // excluded_apps rules, which mirror per-app config matching (match_mode
     // 'wm_class'|'title', optional regex, 'wm_class' field holding the pattern).
-    _isExcludedFromDefaults(window, wmClass) {
+    _isExcludedFromDefaults(window: Meta.Window, wmClass: string) {
         const rules = this._globalDefaults.excluded_apps || [];
         if (rules.length === 0) return false;
 
@@ -453,10 +470,10 @@ export default class DejaWindowExtension extends Extension {
     _handleCaptureRequest() {
         if (!this._settings) return;
 
-        const raw = this._settings.get_string('capture-state-request');
+        const raw = this._settings!.get_string('capture-state-request');
         if (!raw) return;
 
-        let request = null;
+        let request: CaptureRequest | null = null;
         try {
             request = JSON.parse(raw);
         } catch (e) {
@@ -465,8 +482,8 @@ export default class DejaWindowExtension extends Extension {
         if (!request || request.status || !request.wm_class) return;
 
         const matchMode = request.match_mode || 'wm_class';
-        const reply = (status) => {
-            this._settings.set_string('capture-state-request',
+        const reply = (status: CaptureStatus) => {
+            this._settings!.set_string('capture-state-request',
                 JSON.stringify({ status, wm_class: request.wm_class, match_mode: matchMode }));
         };
 
@@ -498,7 +515,7 @@ export default class DejaWindowExtension extends Extension {
     // because windowMenu.js calls it directly — running in this same process,
     // it already holds the Meta.Window and needs no capture-state-request
     // round-trip. Returns false if the window can't be snapshotted.
-    captureWindowState(window, identity) {
+    captureWindowState(window: Meta.Window | null | undefined, identity: string) {
         if (!window || !identity || !window.get_workspace()) return false;
         // An explicit capture uses the selected normal window even when automatic
         // tracking remembers it as secondary. Capturing does not change that role.
@@ -514,32 +531,32 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Helper to record a new WM_CLASS in the known-wm-classes setting
-    _recordWmClass(wmClass) {
+    _recordWmClass(wmClass: string | null) {
         if (!wmClass) return;
-        let known = this._settings.get_value('known-wm-classes').recursiveUnpack();
+        let known = this._settings!.get_value('known-wm-classes').recursiveUnpack() as string[];
         if (!known.includes(wmClass)) {
             known.push(wmClass);
             // Sort to look nice
             known.sort();
-            this._settings.set_value('known-wm-classes', new GLib.Variant('as', known));
+            this._settings!.set_value('known-wm-classes', new GLib.Variant('as', known));
         }
     }
 
     // Helper to record a new window title in the known-window-titles setting
     // (feeds the prefs pickers when match_mode is 'title'). Capped because,
     // unlike WM_CLASSes, titles are unbounded (e.g. browser tab titles).
-    _recordTitle(title) {
+    _recordTitle(title: string | null) {
         if (!title) return;
-        let known = this._settings.get_value('known-window-titles').recursiveUnpack();
+        let known = this._settings!.get_value('known-window-titles').recursiveUnpack() as string[];
         if (known.includes(title)) return;
         if (known.length >= 200) return;
         known.push(title);
         known.sort();
-        this._settings.set_value('known-window-titles', new GLib.Variant('as', known));
+        this._settings!.set_value('known-window-titles', new GLib.Variant('as', known));
     }
 
     // Helper to cleanup a window. Disconnects signals and removes timeout if pending.
-    _cleanupWindow(window) {
+    _cleanupWindow(window: Meta.Window) {
         const handle = this._handles.get(window);
         if (!handle) return;
 
@@ -571,7 +588,7 @@ export default class DejaWindowExtension extends Extension {
         this._handles.delete(window);
     }
 
-    _isMainWindowCandidate(window) {
+    _isMainWindowCandidate(window: Meta.Window | null | undefined) {
         return window && !window.is_override_redirect() &&
             window.get_window_type() === Meta.WindowType.NORMAL &&
             !window.get_transient_for() && !window.is_skip_taskbar();
@@ -579,7 +596,7 @@ export default class DejaWindowExtension extends Extension {
 
     // WM_CLASS is also the identity used by automatic application profiles.
     // Select by creation order, not focus order, when adopting existing windows.
-    _isValidManagedWindow(window) {
+    _isValidManagedWindow(window: Meta.Window | null | undefined): window is Meta.Window {
         if (!window || this._secondaryWindows.has(window)) return false;
         if (!this._isMainWindowCandidate(window)) {
             this._secondaryWindows.add(window);
@@ -603,7 +620,7 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Helper to handle window creation. Records WM_CLASS and checks if we should manage the window.
-    _onWindowCreated(window) {
+    _onWindowCreated(window: Meta.Window | null) {
         // First check: Is this a manage-able window?
         if (!this._isValidManagedWindow(window)) return;
 
@@ -626,7 +643,7 @@ export default class DejaWindowExtension extends Extension {
         this._attachProbe(window);
     }
 
-    _attachProbe(window) {
+    _attachProbe(window: Meta.Window) {
         if (!this._probes) this._probes = new Map();
         if (this._probes.has(window)) return;
 
@@ -655,17 +672,17 @@ export default class DejaWindowExtension extends Extension {
         this._probes.set(window, [id1, id2, id3]);
     }
 
-    _removeProbe(window) {
+    _removeProbe(window: Meta.Window) {
         if (!this._probes || !this._probes.has(window)) return;
         const ids = this._probes.get(window);
-        ids.forEach(id => {
+        ids!.forEach(id => {
             window.disconnect(id);
         });
         this._probes.delete(window);
     }
 
     // Helper to check if we should manage a window. If so, sets up listeners.
-    _checkAndSetup(window) {
+    _checkAndSetup(window: Meta.Window | null) {
         // Bypassed: skip adopting new windows entirely, no side effects.
         if (!this._functionalityEnabled) return false;
 
@@ -682,7 +699,7 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Sets up specific listeners for configured windows to handle resizing, positioning, and saving state.
-    _setupListeners(window, identity) {
+    _setupListeners(window: Meta.Window, identity: string) {
         if (this._handles.has(window)) return;
 
         debug('[DejaWindow] Setup listeners for:', identity);
@@ -690,7 +707,7 @@ export default class DejaWindowExtension extends Extension {
         const visitedLayouts = this._windowLayouts.get(window) || new Set();
         visitedLayouts.add(this._layoutKey());
         this._windowLayouts.set(window, visitedLayouts);
-        const handle = {
+        const handle: WindowHandle = {
             visitedLayouts,
             timeoutId: 0,               // Store timeout ID
             wsTimeoutId: 0,             // Store workspace timeout ID
@@ -715,7 +732,7 @@ export default class DejaWindowExtension extends Extension {
 
         // EVENT-DRIVEN READY CHECK
         // Instead of timers, we use the Window Actor state.
-        const waitForActorMap = (actor) => {
+        const waitForActorMap = (actor: Meta.WindowActor) => {
             if (actor.mapped) {
                 debug('[DejaWindow] Actor already mapped:', identity);
                 triggerRestore();
@@ -745,14 +762,14 @@ export default class DejaWindowExtension extends Extension {
             }
         };
 
-        const actor = window.get_compositor_private();
+        const actor = window.get_compositor_private() as Meta.WindowActor | null;
         if (actor) {
             waitForActorMap(actor);
         } else {
             debug('[DejaWindow] Waiting for Compositor Private (Actor):', identity);
             // notify::compositor-private is a signal on the WINDOW
             window.connectObject('notify::compositor-private', () => {
-                const newActor = window.get_compositor_private();
+                const newActor = window.get_compositor_private() as Meta.WindowActor | null;
                 if (newActor) {
                     debug('[DejaWindow] Compositor Private (Actor) available:', identity);
                     waitForActorMap(newActor);
@@ -763,7 +780,7 @@ export default class DejaWindowExtension extends Extension {
         // --- SAVE LOGIC ---
 
         // Helper to handle window changes. Logs the window's frame rect and checks if we should save the window's state.
-        const handleWindowChange = (window) => {
+        const handleWindowChange = (window: Meta.Window) => {
             // Bypassed: no saving while the logical switch is off.
             if (!this._functionalityEnabled) return;
 
@@ -841,13 +858,13 @@ export default class DejaWindowExtension extends Extension {
     // Secondary monitors have no independent workspace when Mutter restricts
     // workspaces to the primary monitor. Use the intended destination while
     // Wayland is still updating the window's monitor metadata.
-    _monitorHasWorkspaces(monitorIndex) {
+    _monitorHasWorkspaces(monitorIndex: number) {
         return !Meta.prefs_get_workspaces_only_on_primary() ||
             monitorIndex === Main.layoutManager.primaryIndex;
     }
 
     // Applies the saved size and/or position, or falls back to centering if position is invalid/not requested.
-    _applySavedState(window, identity, config) {
+    _applySavedState(window: Meta.Window, identity: string, config: RestoreFlags) {
         const handle = this._handles.get(window);
         // A restore already applied — or already scheduled, since several signals can
         // trigger one before the idle runs — needs no second source.
@@ -872,7 +889,7 @@ export default class DejaWindowExtension extends Extension {
             // A mapped actor can become hidden before this idle runs, for example
             // during Chromium startup or on another workspace. Its Meta.Window is
             // still managed and can receive geometry while the actor is hidden.
-            const actor = window.get_compositor_private();
+            const actor = window.get_compositor_private() as Meta.WindowActor | null;
             if (!actor) {
                 debug(`[DejaWindow] Window ${identity} actor not ready in idle, skipping...`);
                 return GLib.SOURCE_REMOVE;
@@ -892,9 +909,9 @@ export default class DejaWindowExtension extends Extension {
             }
 
             // ... (Rest of logic remains mostly same, just retrieving settings) ...
-            let savedStates = {};
+            let savedStates: ApplicationStates = {};
             try {
-                savedStates = JSON.parse(this._settings.get_string('window-app-states')) || {};
+                savedStates = JSON.parse(this._settings!.get_string('window-app-states')) || {};
             } catch (e) {
                 console.error('[DejaWindow] Error reading window-app-states:', e);
             }
@@ -1041,14 +1058,14 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Saves the current window geometry to GSettings for persistence across sessions.
-    _performSave(identity, monitorIndex, x, y, w, h, config, isMaximized, workspaceIndex, minimized, above, sticky) {
+    _performSave(identity: string, monitorIndex: number, x: number, y: number, w: number, h: number, config: RestoreFlags, isMaximized: boolean, workspaceIndex: number, minimized: boolean, above: boolean, sticky: boolean) {
         if (!this._settings || GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
 
         debug(`[DejaWindow] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
 
-        let savedStates = {};
+        let savedStates: ApplicationStates = {};
         try {
-            const json = this._settings.get_string('window-app-states');
+            const json = this._settings!.get_string('window-app-states');
             savedStates = JSON.parse(json) || {};
         } catch (e) {
             savedStates = {};
@@ -1118,13 +1135,13 @@ export default class DejaWindowExtension extends Extension {
             layouts[layoutKey] = layoutState;
             // Native preferences can still display the most recently captured state.
             savedStates[identity] = { ...layoutState, layouts };
-            return this._settings.set_string('window-app-states', JSON.stringify(savedStates));
+            return this._settings!.set_string('window-app-states', JSON.stringify(savedStates));
         }
         return true;
     }
 
     // Centers the window on the current monitor's work area.
-    _centerWindow(window) {
+    _centerWindow(window: Meta.Window) {
         if (!window.get_workspace()) return false;
         const monitorIndex = window.get_monitor();
         const workspace = window.get_workspace();
@@ -1140,7 +1157,7 @@ export default class DejaWindowExtension extends Extension {
 
     // Checks if a point (top-left corner of window) is roughly within the visible work area,
     // with some tolerance (50px) to ensure the window title bar is accessible.
-    _isPointInWorkArea(x, y, area) {
+    _isPointInWorkArea(x: number, y: number, area: {x: number; y: number; width: number; height: number}) {
         return x >= area.x - 50 &&
             x <= (area.x + area.width - 50) &&
             y >= area.y - 50 &&
@@ -1148,7 +1165,7 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Helper to find a free position for the window to avoid overlap
-    _findFreePosition(workspace, window, identity, targetX, targetY) {
+    _findFreePosition(workspace: Meta.Workspace, window: Meta.Window, identity: string, targetX: number, targetY: number) {
         // Iterative collision detection
         // We only care about collision if we have a valid target position (either saved or centered)
         // and we want to avoid perfect overlap with existing windows of the same class.

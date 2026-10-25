@@ -1,0 +1,19 @@
+{
+  "name": "deja-window-workstation",
+  "version": "17.0.7",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "@girs/gjs": "4.1.0",
+    "@girs/gnome-shell": "50.0.4"
+  }
+}

@@ -2,7 +2,8 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SRC_DIR="$PROJECT_ROOT/src"
+SRC_DIR="$PROJECT_ROOT/dist"
+npm --prefix "$PROJECT_ROOT" run build
 ZIP_NAME="$PROJECT_ROOT/temp/deja-window.zip"
 
 # Create temp directory if it doesn't exist
@@ -25,6 +26,7 @@ zip -r "$ZIP_NAME" extension.js \
     prefs.js \
     windowMenu.js \
     schemas/org.gnome.shell.extensions.deja-window.gschema.xml \
+    schemas/gschemas.compiled \
     icons/deja-window-symbolic.png \
     icons/globe-symbolic.svg
 

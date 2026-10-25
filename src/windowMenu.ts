@@ -1,3 +1,6 @@
+import type Meta from 'gi://Meta';
+import type DejaWindowExtension from './extension.js';
+import type {GlobalDefaults, MatchRule, RestoreFlags, RestoreKey, RestoreOption, RuleState, WindowRule} from './types.js';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -26,7 +29,21 @@ const NEW_RULE_DEFAULTS = {
 // shorter than their prefs counterparts ("On All Workspaces" vs "Restore Always
 // on Visible Workspace"): the window menu is narrow and every label widens it.
 // 'dependsOn' greys a switch out while the flag it refines is off.
-const RESTORE_TOGGLES = [
+type MenuRestoreKey = Exclude<RestoreKey, 'avoid_overlap'>;
+interface MenuItems extends Record<MenuRestoreKey, PopupMenu.PopupSwitchMenuItem> {
+    restoreOpen: boolean;
+    header: PopupMenu.PopupMenuItem;
+    manage: PopupMenu.PopupSwitchMenuItem;
+    mode: PopupMenu.PopupSwitchMenuItem;
+    exclude: PopupMenu.PopupSwitchMenuItem;
+    lock: PopupMenu.PopupSwitchMenuItem;
+    restoreSeparator: PopupMenu.PopupSeparatorMenuItem;
+    restore: PopupMenu.PopupMenuItem;
+    restoreArrow: St.Icon;
+    capture: PopupMenu.PopupMenuItem;
+}
+
+const RESTORE_TOGGLES: (RestoreOption & {key: MenuRestoreKey})[] = [
     { key: 'restore_size', label: 'Size' },
     { key: 'restore_pos', label: 'Position' },
     { key: 'restore_maximized', label: 'Maximized' },
@@ -48,7 +65,7 @@ const HEIGHT_LIMIT_MARGIN = 24;
 // tighter limit would clip GNOME's own items with no way to scroll to them.
 const MIN_HEIGHT_LIMIT = 200;
 
-function ellipsize(text) {
+function ellipsize(text: string | null) {
     if (!text) return '';
     return text.length > MAX_HEADER_PATTERN
         ? `${text.slice(0, MAX_HEADER_PATTERN - 1)}…`
@@ -67,7 +84,10 @@ function ellipsize(text) {
  * prefs surface still require opening Settings.
  */
 export class DejaWindowMenu {
-    constructor(extension) {
+    declare _extension: DejaWindowExtension;
+    declare _originalBuildMenu: typeof WindowMenu.WindowMenu.prototype._buildMenu | null;
+
+    constructor(extension: DejaWindowExtension) {
         this._extension = extension;
         this._originalBuildMenu = null;
     }
@@ -77,8 +97,8 @@ export class DejaWindowMenu {
 
         const self = this;
         this._originalBuildMenu = WindowMenu.WindowMenu.prototype._buildMenu;
-        WindowMenu.WindowMenu.prototype._buildMenu = function (window) {
-            self._originalBuildMenu.call(this, window);
+        WindowMenu.WindowMenu.prototype._buildMenu = function (this: WindowMenu.WindowMenu, window: Meta.Window) {
+            self._originalBuildMenu!.call(this, window);
             self._appendSubmenu(this, window);
         };
     }
@@ -93,7 +113,7 @@ export class DejaWindowMenu {
     // Same matching rule as DejaWindowExtension._getConfigForWindow: a config
     // matches by wm_class or title (literal or regex) depending on match_mode,
     // and a disabled rule never matches (same effect as if it were deleted).
-    _configMatches(config, wmClass, title) {
+    _configMatches(config: WindowRule, wmClass: string | null, title: string | null) {
         if (config.enabled === false) return false;
 
         const mode = config.match_mode || 'wm_class';
@@ -110,19 +130,19 @@ export class DejaWindowMenu {
         return config.wm_class === value;
     }
 
-    _readState(wmClass, title) {
+    _readState(wmClass: string | null, title: string | null) {
         const settings = this._extension._settings;
 
-        let configs = [];
+        let configs: WindowRule[] = [];
         try {
-            configs = JSON.parse(settings.get_string('window-app-configs')) || [];
+            configs = JSON.parse(settings!.get_string('window-app-configs')) || [];
         } catch (e) {
             configs = [];
         }
 
-        let globalDefaults = {};
+        let globalDefaults: GlobalDefaults = {};
         try {
-            globalDefaults = JSON.parse(settings.get_string('window-global-defaults')) || {};
+            globalDefaults = JSON.parse(settings!.get_string('window-global-defaults')) || {};
         } catch (e) {
             globalDefaults = {};
         }
@@ -154,7 +174,7 @@ export class DejaWindowMenu {
             ? excludedList.findIndex(r => r.wm_class === title && r.match_mode === 'title' && !r.is_regex)
             : -1;
 
-        let state;
+        let state: RuleState;
         if (activeConfig) {
             state = activeConfig.match_mode === 'title' ? 'name' : 'class';
         } else if (excludedClassIdx !== -1) {
@@ -170,11 +190,11 @@ export class DejaWindowMenu {
 
     // One line describing what governs this window right now, so the switches
     // below have a subject: which pattern is matched, and by what.
-    _headerText(status) {
+    _headerText(status: ReturnType<DejaWindowMenu['_status']>) {
         const { state, activeConfig, pattern, globalDefaults } = status;
 
         if (state === 'class' || state === 'name') {
-            if (activeConfig.is_regex) return `${ellipsize(activeConfig.wm_class)} — regex rule`;
+            if (activeConfig!.is_regex) return `${ellipsize(activeConfig!.wm_class)} — regex rule`;
             return `${ellipsize(pattern)} — matched by ${state === 'name' ? 'title' : 'class'}`;
         }
         if (state === 'excluded-class' || state === 'excluded-title') {
@@ -186,7 +206,7 @@ export class DejaWindowMenu {
     }
 
     // Flattens _readState into what the switches actually need.
-    _status(wmClass, title) {
+    _status(wmClass: string | null, title: string | null) {
         const st = this._readState(wmClass, title);
         const managed = st.state === 'class' || st.state === 'name';
         const excluded = st.state === 'excluded-class' || st.state === 'excluded-title';
@@ -199,13 +219,13 @@ export class DejaWindowMenu {
             modeIsTitle,
             // A regex rule can match many windows; the menu must not silently
             // rewrite or retire it on this window's behalf.
-            isRegex: managed && !!st.activeConfig.is_regex,
-            config: st.activeConfig || {},
+            isRegex: managed && !!st.activeConfig!.is_regex,
+            config: st.activeConfig || {} as Partial<WindowRule>,
             pattern: modeIsTitle ? title : wmClass,
         };
     }
 
-    _appendSubmenu(menu, window) {
+    _appendSubmenu(menu: WindowMenu.WindowMenu, window: Meta.Window) {
         // Normal windows can edit application rules independently of which
         // window is selected for placement restoration and state capture.
         if (!this._extension._isMainWindowCandidate(window)) return;
@@ -221,7 +241,7 @@ export class DejaWindowMenu {
         // 'restoreOpen' is the only piece of menu state that isn't backed by
         // settings: the restore_* switches are worth a whole screenful, so they
         // start folded away behind their own expander row.
-        const items = { restoreOpen: false };
+        const items = { restoreOpen: false } as MenuItems;
 
         // Set while sync() drives the switches. PopupSwitchMenuItem emits
         // 'toggled' off the underlying Switch's notify::state, so setting a
@@ -244,7 +264,7 @@ export class DejaWindowMenu {
             this._syncScroll(menu, submenu);
         };
 
-        const addSwitch = (label, onToggled) => {
+        const addSwitch = (label: string, onToggled: (active: boolean) => void) => {
             const item = new PopupMenu.PopupSwitchMenuItem(label, false);
             // Flipping a switch must not dismiss the window menu — the point of
             // this submenu is setting several flags in one go.
@@ -281,7 +301,7 @@ export class DejaWindowMenu {
             // rules are keyed by class, falling back to the title only when the
             // window has no class to match on.
             const { slotClass, slotTitle } = this._status(wmClass, title);
-            let target;
+            let target: RuleState;
             if (slotClass) target = 'class';
             else if (slotTitle) target = 'name';
             else target = wmClass ? 'class' : 'name';
@@ -375,7 +395,7 @@ export class DejaWindowMenu {
     // fitting on the side it chose. St.ScrollView only ever scrolls when a
     // max-height is set on the *top* menu (see PopupSubMenu's own comment), so
     // the style has to go on the window menu itself, not on our submenu.
-    _limitHeight(menu, submenu) {
+    _limitHeight(menu: WindowMenu.WindowMenu, submenu: PopupMenu.PopupSubMenuMenuItem) {
         const source = menu.sourceActor;
         if (!source) return;
 
@@ -396,14 +416,14 @@ export class DejaWindowMenu {
     }
 
     // Drops the cap again, leaving GNOME's menu exactly as it found it.
-    _releaseHeight(menu) {
+    _releaseHeight(menu: WindowMenu.WindowMenu) {
         menu.actor.style = null;
     }
 
     // Re-runs PopupSubMenu's own scrollbar test. It only does that when it
     // opens ("Dynamic changes in whether we need it aren't handled properly"),
     // but our submenu also grows and shrinks while it's open.
-    _syncScroll(menu, submenu) {
+    _syncScroll(menu: WindowMenu.WindowMenu, submenu: PopupMenu.PopupSubMenuMenuItem) {
         // Nothing to decide while the submenu is folded away — and this also
         // keeps the initial paint from measuring a menu that isn't shown yet.
         if (!submenu.menu.isOpen) return;
@@ -425,7 +445,7 @@ export class DejaWindowMenu {
     // Repaints every item from the current settings state. Called for the
     // initial build and after each edit, so there's exactly one description of
     // what the submenu should look like for a given state.
-    _syncItems(items, wmClass, title) {
+    _syncItems(items: MenuItems, wmClass: string | null, title: string | null) {
         const st = this._status(wmClass, title);
         const { managed, excluded, modeIsTitle, isRegex, config } = st;
 
@@ -474,7 +494,7 @@ export class DejaWindowMenu {
     // Opens Preferences, with the window's current rule pre-expanded when it
     // has one. Since prefs.js runs in a separate process, the target rule is
     // handed over via a one-shot GSettings key rather than any direct call.
-    _openCustomize(wmClass, title) {
+    _openCustomize(wmClass: string | null, title: string | null) {
         const settings = this._extension._settings;
         if (!settings) return;
 
@@ -491,7 +511,7 @@ export class DejaWindowMenu {
     // Snapshots this window's geometry into the rule's saved state. Unlike the
     // prefs button, no GSettings round-trip is needed: the menu runs inside the
     // extension process and already holds the Meta.Window.
-    _captureState(window, wmClass, title) {
+    _captureState(window: Meta.Window, wmClass: string | null, title: string | null) {
         const { activeConfig } = this._readState(wmClass, title);
         if (!activeConfig) return;
 
@@ -507,7 +527,7 @@ export class DejaWindowMenu {
     // the same approach extension.js uses for the Meta maximize/unmaximize
     // arity differences. Level arguments are omitted on purpose: that hides
     // the progress bar, leaving just the icon and the label.
-    _showOsd(iconName, label) {
+    _showOsd(iconName: string, label: string) {
         const icon = new Gio.ThemedIcon({ name: iconName });
         const manager = Main.osdWindowManager;
 
@@ -521,7 +541,7 @@ export class DejaWindowMenu {
     // Applies a mutation to the rule currently governing this window and
     // persists it. No-op when nothing explicit governs it (the restore/lock
     // switches are hidden in that case).
-    _updateActiveConfig(wmClass, title, mutate) {
+    _updateActiveConfig(wmClass: string | null, title: string | null, mutate: (config: WindowRule) => void) {
         const settings = this._extension._settings;
         if (!settings) return;
 
@@ -538,7 +558,7 @@ export class DejaWindowMenu {
     // Removes the (menu-managed) exclusion rules at the given indexes from
     // excludedList, highest index first so splices don't shift each other.
     // Returns true if anything was removed.
-    _removeExclusions(excludedList, classIdx, titleIdx) {
+    _removeExclusions(excludedList: MatchRule[], classIdx: number, titleIdx: number) {
         let removed = false;
         for (const idx of [classIdx, titleIdx].sort((a, b) => b - a)) {
             if (idx !== -1) {
@@ -549,7 +569,7 @@ export class DejaWindowMenu {
         return removed;
     }
 
-    _applyState(window, wmClass, title, targetState) {
+    _applyState(window: Meta.Window, wmClass: string | null, title: string | null, targetState: RuleState) {
         const settings = this._extension._settings;
         if (!settings) return;
 
@@ -566,7 +586,7 @@ export class DejaWindowMenu {
         // unless it's the rule we're about to keep/enable. Never deletes: the
         // rule (and its customization) stays around, just switched off, so
         // switching back later restores it instead of starting from scratch.
-        const retireActiveConfig = (keep) => {
+        const retireActiveConfig = (keep: WindowRule | null | undefined) => {
             if (activeConfig && activeConfig !== keep && activeConfig.enabled !== false) {
                 activeConfig.enabled = false;
                 configsChanged = true;

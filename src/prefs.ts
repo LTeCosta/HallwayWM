@@ -1,3 +1,4 @@
+import type {ApplicationStates, CaptureRequest, GlobalDefaults, MatchMode, MatchRule, RestoreFlags, RestoreKey, RestoreOption, WindowRule} from './types.js';
 import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
@@ -5,13 +6,21 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+type RuleFlag = RestoreKey | 'enabled' | 'locked';
+type RuleRow = Adw.ExpanderRow & {_dejaMatchWmClass: string; _dejaMatchMode: MatchMode};
+interface ConfigurationBackup {
+    deja_window_backup?: number;
+    window_app_configs?: WindowRule[];
+    window_global_defaults?: GlobalDefaults;
+}
+
 // The restore options, in the order they're shown, shared by per-app rules and
 // Global Defaults — the same set and the same short labels as the window menu's
 // "Restore" section (see windowMenu.js RESTORE_TOGGLES), since both edit the
 // same fields. 'dependsOn' marks an option that only refines another one: it's
 // greyed out while its parent is off, and left out of the section's summary so
 // that stays a list of what actually gets restored.
-const RESTORE_OPTIONS = [
+const RESTORE_OPTIONS: RestoreOption[] = [
     { key: 'restore_size', label: 'Size' },
     { key: 'restore_pos', label: 'Position' },
     {
@@ -38,7 +47,7 @@ const RESTORE_OPTIONS = [
 // restores, or why it does nothing.
 const MAX_RESTORE_SUMMARY = 52;
 
-function restoreSummary(values) {
+function restoreSummary(values: RestoreFlags) {
     const primary = RESTORE_OPTIONS.filter(option => !option.dependsOn);
     const active = primary.filter(option => !!values[option.key]);
 
@@ -62,7 +71,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
      * Fills the preferences window with the extension settings page.
      * @param {Adw.PreferencesWindow} window - The preferences window.
      */
-    fillPreferencesWindow(window) {
+    async fillPreferencesWindow(window: Adw.PreferencesWindow): Promise<void> {
         // Use default height
         window.set_default_size(700, 0);
 
@@ -101,7 +110,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         if (arrowFixProvider.load_from_string) {
             arrowFixProvider.load_from_string(arrowFixCss);
         } else {
-            arrowFixProvider.load_from_data(new TextEncoder().encode(arrowFixCss), -1);
+            (arrowFixProvider.load_from_data as unknown as (data: Uint8Array, length: number) => void)(new TextEncoder().encode(arrowFixCss), -1);
         }
         Gtk.StyleContext.add_provider_for_display(
             display, arrowFixProvider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -199,7 +208,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         });
         backupRow.add_suffix(importButton);
 
-        const showBackupError = (message) => {
+        const showBackupError = (message: string) => {
             const dialog = new Adw.MessageDialog({
                 heading: 'Import Failed',
                 body: message,
@@ -230,7 +239,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                         new TextEncoder().encode(JSON.stringify(data, null, 2)),
                         null, false, Gio.FileCreateFlags.NONE, null);
                 } catch (e) {
-                    if (!e.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED))
+                    if (!(e as GLib.Error).matches(Gtk.DialogError, Gtk.DialogError.DISMISSED))
                         console.error('Export failed:', e);
                 }
             });
@@ -246,13 +255,13 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                 try {
                     file = dialog.open_finish(result);
                 } catch (e) {
-                    if (!e.matches(Gtk.DialogError, Gtk.DialogError.DISMISSED))
+                    if (!(e as GLib.Error).matches(Gtk.DialogError, Gtk.DialogError.DISMISSED))
                         console.error('Import failed:', e);
                     return;
                 }
                 if (!file) return;
 
-                let data;
+                let data: ConfigurationBackup;
                 try {
                     const [ok, bytes] = file.load_contents(null);
                     if (!ok) throw new Error('Could not read file');
@@ -331,8 +340,8 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // -- Add New App Section --
 
         // Populate with known classes/titles (recorded by the extension side)
-        const known = settings.get_value('known-wm-classes').recursiveUnpack();
-        const knownTitles = settings.get_value('known-window-titles').recursiveUnpack();
+        const known = settings.get_value('known-wm-classes').recursiveUnpack() as string[];
+        const knownTitles = settings.get_value('known-window-titles').recursiveUnpack() as string[];
 
         // Opens a picker for a known WM_CLASS, filling targetEntry on selection.
         // GtkDropDown's popup is a separate xdg_popup Wayland surface, which on
@@ -342,7 +351,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // window surface as Adw.MessageDialog, which is confirmed to work here,
         // so it's used for this picker too instead of chasing the popup bug.
         // `items` lets callers choose which list to show (WM_CLASSes vs titles).
-        const showKnownAppsPicker = (targetEntry, items = known) => {
+        const showKnownAppsPicker = (targetEntry: Gtk.Entry, items: string[] = known) => {
             if (items.length === 0) return;
 
             const dialog = new Adw.Dialog({
@@ -377,7 +386,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                 const query = searchEntry.get_text().toLowerCase();
                 let child = listBox.get_first_child();
                 while (child) {
-                    child.visible = !query || child.title.toLowerCase().includes(query);
+                    child.visible = !query || (child as Adw.ActionRow).title.toLowerCase().includes(query);
                     child = child.get_next_sibling();
                 }
             });
@@ -448,7 +457,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // read the same way, with the same wording and the same picker. Rows are
         // appended to `group`; the returned patternRow lets callers pack an extra
         // button (Add) next to the entry, and reset() clears the form after use.
-        const buildMatchingRows = (targetGroup, { pattern = '', mode = 'wm_class', isRegex = false } = {}) => {
+        const buildMatchingRows = (targetGroup: Adw.PreferencesGroup, { pattern = '', mode = 'wm_class', isRegex = false }: {pattern?: string; mode?: MatchMode; isRegex?: boolean} = {}) => {
             // Two linked toggles instead of a Gtk.ComboBoxText: with only two
             // modes both are visible at a glance and switching takes one click.
             // It also avoids the combo's popup, whose pointer grab swallowed the
@@ -493,7 +502,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             });
             patternRow.add_suffix(patternEntry);
 
-            const getMode = () => titleToggle.active ? 'title' : 'wm_class';
+            const getMode = (): MatchMode => titleToggle.active ? 'title' : 'wm_class';
 
             if (known.length > 0 || knownTitles.length > 0) {
                 const pickButton = new Gtk.Button({
@@ -535,14 +544,14 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         addMatching.patternRow.add_suffix(addButton);
 
         // State used by functions
-        let rows = [];
-        let settingsSignalId = null;
-        let captureSignalId = null;
+        let rows: RuleRow[] = [];
+        let settingsSignalId: number | null = null;
+        let captureSignalId: number | null = null;
         let captureTimeoutId = 0;
 
         // --- Helper Functions ---
 
-        const getConfigs = () => {
+        const getConfigs = (): WindowRule[] => {
             const json = settings.get_string('window-app-configs');
             try {
                 return JSON.parse(json) || [];
@@ -552,7 +561,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             }
         };
 
-        const saveConfigs = (configs) => {
+        const saveConfigs = (configs: WindowRule[]) => {
             settings.set_string('window-app-configs', JSON.stringify(configs));
         };
 
@@ -562,7 +571,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // whether to track it for later removal on refresh. extraSuffix, when
         // given, is packed to the left of the switch (suffixes are laid out in
         // insertion order), keeping the switch itself rightmost as usual.
-        const makeSwitchRow = (addFn, title, subtitle, initialValue, onChange, extraSuffix = null) => {
+        const makeSwitchRow = (addFn: (row: Adw.ActionRow) => void, title: string, subtitle: string | null, initialValue: boolean | undefined, onChange: (value: boolean) => void, extraSuffix: Gtk.Widget | null = null) => {
             const row = new Adw.ActionRow({ title });
             if (subtitle) row.set_subtitle(subtitle);
             const sw = new Gtk.Switch({
@@ -582,14 +591,14 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // switches. `values` supplies the current state, `onChange(key, value)`
         // persists a single field. Returns the expander; it keeps its own
         // subtitle and the greying of dependent options in sync.
-        const buildRestoreSection = (values, onChange) => {
+        const buildRestoreSection = (values: RestoreFlags, onChange: (key: RestoreKey, value: boolean) => void) => {
             const expander = new Adw.ExpanderRow({
                 title: 'Restore',
                 subtitle: restoreSummary(values),
             });
 
-            const switches = {};
-            const optionRows = [];
+            const switches = {} as Record<RestoreKey, Gtk.Switch>;
+            const optionRows: {row: Adw.ActionRow; dependsOn?: RestoreKey}[] = [];
 
             const sync = () => {
                 expander.set_subtitle(restoreSummary(values));
@@ -603,7 +612,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                     ? !!values[option.key]
                     : !!option.defaultOn;
 
-                let optionRow;
+                let optionRow!: Adw.ActionRow;
                 switches[option.key] = makeSwitchRow(
                     r => { optionRow = r; expander.add_row(r); },
                     option.label, option.subtitle || null, initial,
@@ -623,7 +632,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // But the previous implementation assumed wm_class uniqueness.
         // We really should pass the config index or object itself if we could, but these helpers are convenient.
         // Let's update `updateConfig` signature.
-        const updateConfig = (wmClass, matchMode, key, value) => {
+        const updateConfig = (wmClass: string, matchMode: MatchMode | undefined, key: RuleFlag, value: boolean) => {
             const configs = getConfigs();
             // Match both class string and mode to be precise
             const config = configs.find(c => c.wm_class === wmClass && (c.match_mode || 'wm_class') === (matchMode || 'wm_class'));
@@ -649,14 +658,14 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // through updateConfig: the saved geometry has to follow the rule to its
         // new key, and the new identity must stay unique. Returns null on
         // success, or a reason string for the caller to report.
-        const updateConfigMatching = (oldPattern, oldMode, newPattern, newMode, newIsRegex) => {
+        const updateConfigMatching = (oldPattern: string, oldMode: MatchMode, newPattern: string, newMode: MatchMode, newIsRegex: boolean) => {
             if (!newPattern) return 'The pattern cannot be empty';
 
             if (newIsRegex) {
                 try {
                     new RegExp(newPattern);
                 } catch (e) {
-                    return `Invalid regular expression: ${e.message}`;
+                    return `Invalid regular expression: ${(e as Error).message}`;
                 }
             }
 
@@ -687,8 +696,8 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // overwrites state that's already there, and leaves the old entry alone
         // if some other rule still matches on that pattern (states are keyed by
         // pattern only, so two rules differing just by match_mode share one).
-        const migrateSavedState = (oldKey, newKey, configs) => {
-            let states = {};
+        const migrateSavedState = (oldKey: string, newKey: string, configs: WindowRule[]) => {
+            let states: ApplicationStates = {};
             try {
                 states = JSON.parse(settings.get_string('window-app-states')) || {};
             } catch (e) {
@@ -704,7 +713,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             settings.set_string('window-app-states', JSON.stringify(states));
         };
 
-        const removeConfig = (wmClass, matchMode) => {
+        const removeConfig = (wmClass: string, matchMode: MatchMode | undefined) => {
             let configs = getConfigs();
             // Filter out the specific entry
             configs = configs.filter(c => !(c.wm_class === wmClass && (c.match_mode || 'wm_class') === (matchMode || 'wm_class')));
@@ -714,12 +723,12 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // Returns null on success, or a reason string for the caller to report —
         // same contract as updateConfigMatching, so creating a rule rejects the
         // same input the "Edit Matching" dialog would.
-        const addConfig = (wmClass, isRegex = false, matchMode = 'wm_class') => {
+        const addConfig = (wmClass: string, isRegex = false, matchMode: MatchMode = 'wm_class') => {
             if (isRegex) {
                 try {
                     new RegExp(wmClass);
                 } catch (e) {
-                    return `Invalid regular expression: ${e.message}`;
+                    return `Invalid regular expression: ${(e as Error).message}`;
                 }
             }
 
@@ -771,7 +780,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // the extension answers on the same key by adding a 'status' field, and
         // we consume that reply (showing a toast) and clear the key.
 
-        const showToast = (text) => {
+        const showToast = (text: string) => {
             if (typeof window.add_toast === 'function') {
                 window.add_toast(new Adw.Toast({ title: text, timeout: 3 }));
             } else {
@@ -786,7 +795,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             }
         };
 
-        const requestCapture = (wmClass, matchMode) => {
+        const requestCapture = (wmClass: string, matchMode: MatchMode | undefined) => {
             cancelCaptureTimeout();
             settings.set_string('capture-state-request', JSON.stringify({
                 wm_class: wmClass,
@@ -808,7 +817,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             const raw = settings.get_string('capture-state-request');
             if (!raw) return;
 
-            let reply = null;
+            let reply: CaptureRequest | null = null;
             try {
                 reply = JSON.parse(raw);
             } catch (e) {
@@ -841,7 +850,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         captureSignalId = settings.connect('changed::capture-state-request', onCaptureReply);
 
         // One-line description of what a rule matches, shown on its "Matching" row.
-        const matchSummary = (config) => {
+        const matchSummary = (config: WindowRule) => {
             const parts = [config.wm_class,
                 (config.match_mode === 'title') ? 'Window Title' : 'Window Class'];
             if (config.is_regex) parts.push('Regex');
@@ -850,7 +859,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         // Identity of the rule to re-expand after the next refresh, so editing a
         // rule's matching (which renames its row) doesn't collapse it.
-        let expandTarget = null;
+        let expandTarget: MatchRule | null = null;
 
         // Editor for a rule's matching, offered per-rule so a rule created from
         // the window menu — which always picks an exact class/title match — can
@@ -858,7 +867,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // delete it and lose its options. Dialog rather than inline rows: the
         // three fields only make sense applied together, and it keeps a rule's
         // expander from growing another block of controls.
-        const showMatchDialog = (config) => {
+        const showMatchDialog = (config: WindowRule) => {
             const oldPattern = config.wm_class;
             const oldMode = config.match_mode || 'wm_class';
 
@@ -921,7 +930,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         const refreshList = () => {
             // Capture expansion state
-            const expandedStates = {};
+            const expandedStates: Record<string, boolean> = {};
             rows.forEach(row => {
                 expandedStates[row.get_title()] = row.get_expanded();
                 listGroup.remove(row);
@@ -957,8 +966,8 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                 });
                 // Identifies this row for the window menu's "Customize" action
                 // (see applyHighlightTarget below), independent of the display title.
-                row._dejaMatchWmClass = config.wm_class;
-                row._dejaMatchMode = config.match_mode || 'wm_class';
+                (row as RuleRow)._dejaMatchWmClass = config.wm_class;
+                (row as RuleRow)._dejaMatchMode = config.match_mode || 'wm_class';
 
                 // Lets the rule be switched off without deleting it: same
                 // effect as removing it (DejaWindowExtension._getConfigForWindow
@@ -989,9 +998,9 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                 matchRow.add_suffix(editMatchButton);
                 row.add_row(matchRow);
 
-                const detailRows = [];
-                const addAppRow = (title, subtitle, key, initialValue, extraSuffix = null) => {
-                    let detailRow;
+                const detailRows: Adw.PreferencesRow[] = [];
+                const addAppRow = (title: string, subtitle: string | null, key: RuleFlag, initialValue: boolean | undefined, extraSuffix: Gtk.Widget | null = null) => {
+                    let detailRow!: Adw.ActionRow;
                     const sw = makeSwitchRow(r => { detailRow = r; row.add_row(r); }, title, subtitle, initialValue,
                         value => updateConfig(config.wm_class, config.match_mode, key, value), extraSuffix);
                     detailRows.push(detailRow);
@@ -1047,7 +1056,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                 row.add_row(deleteRow);
 
                 listGroup.add(row);
-                rows.push(row);
+                rows.push(row as RuleRow);
             });
 
             expandTarget = null;
@@ -1062,12 +1071,12 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // Consumes the one-shot signal set by the window menu's "Customize" action:
         // switches to this page and expands the matching rule's row. Cleared
         // right after reading so it doesn't re-trigger on a later refresh/open.
-        let prefsHighlightSignalId = null;
+        let prefsHighlightSignalId: number | null = null;
         const applyHighlightTarget = () => {
             const raw = settings.get_string('prefs-highlight-target');
             if (!raw) return;
 
-            let target = null;
+            let target: MatchRule | null = null;
             try {
                 target = JSON.parse(raw);
             } catch (e) {
@@ -1107,7 +1116,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             excluded_apps: []
         };
 
-        const getGlobalDefaults = () => {
+        const getGlobalDefaults = (): GlobalDefaults & {enabled: boolean} => {
             const json = settings.get_string('window-global-defaults');
             try {
                 const defaults = { ...DEFAULT_GLOBAL_DEFAULTS, ...(JSON.parse(json) || {}) };
@@ -1120,15 +1129,15 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             }
         };
 
-        const saveGlobalDefaults = (defaults) => {
+        const saveGlobalDefaults = (defaults: GlobalDefaults) => {
             settings.set_string('window-global-defaults', JSON.stringify(defaults));
         };
 
-        let globalDefaultsSignalId = null;
+        let globalDefaultsSignalId: number | null = null;
 
         // Used by switches: writes a single field, blocking our own refresh
         // (switches already reflect the new value; no need to rebuild the section).
-        const updateGlobalDefaults = (key, value) => {
+        const updateGlobalDefaults = (key: RestoreKey | 'enabled', value: boolean) => {
             const defaults = getGlobalDefaults();
             defaults[key] = value;
 
@@ -1139,16 +1148,16 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         // Excluded apps are stored as rule objects in excluded_apps
         // ({wm_class: pattern, match_mode, is_regex}), mirroring per-app configs.
-        const getExcludedApps = (defaults) => [...(defaults.excluded_apps || [])];
+        const getExcludedApps = (defaults: GlobalDefaults) => [...(defaults.excluded_apps || [])];
 
-        const saveExcludedApps = (defaults, apps) => {
+        const saveExcludedApps = (defaults: GlobalDefaults, apps: MatchRule[]) => {
             defaults.excluded_apps = apps;
             saveGlobalDefaults(defaults);
         };
 
         // Used by the exclude list: a row needs to appear/disappear, so let the
         // changed:: signal trigger a full section rebuild instead of blocking it.
-        const removeExcluded = (wmClass, matchMode, isRegex) => {
+        const removeExcluded = (wmClass: string, matchMode: MatchMode | undefined, isRegex: boolean | undefined) => {
             const defaults = getGlobalDefaults();
             const apps = getExcludedApps(defaults).filter(a =>
                 !(a.wm_class === wmClass && (a.match_mode || 'wm_class') === (matchMode || 'wm_class') && !!a.is_regex === !!isRegex));
@@ -1158,14 +1167,14 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // Same null-or-reason contract as addConfig, so a bad pattern is reported
         // here the way it is on the Applications tab instead of silently doing
         // nothing.
-        const addExcluded = (wmClass, isRegex = false, matchMode = 'wm_class') => {
+        const addExcluded = (wmClass: string, isRegex = false, matchMode: MatchMode = 'wm_class') => {
             if (!wmClass) return 'The pattern cannot be empty';
 
             if (isRegex) {
                 try {
                     new RegExp(wmClass);
                 } catch (e) {
-                    return `Invalid regular expression: ${e.message}`;
+                    return `Invalid regular expression: ${(e as Error).message}`;
                 }
             }
 
@@ -1219,15 +1228,15 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         excludeAddButton.connect('clicked', onExcludeAddClicked);
         excludeMatching.patternEntry.connect('activate', onExcludeAddClicked);
 
-        let globalDefaultsRows = [];
-        let excludeRows = [];
+        let globalDefaultsRows: Adw.PreferencesRow[] = [];
+        let excludeRows: Adw.PreferencesRow[] = [];
 
         // Every row below "Enabled" (including the whole Excluded Apps group)
         // only matters while Global Defaults itself is on, so grey them out
         // together with it. Index 0 in globalDefaultsRows is the "Enabled" row
         // itself, which must stay interactive so the section can be turned
         // back on.
-        const updateSectionSensitivity = (active) => {
+        const updateSectionSensitivity = (active: boolean) => {
             globalDefaultsRows.slice(1).forEach(row => { row.sensitive = active; });
             excludeGroup.sensitive = active;
         };
