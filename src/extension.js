@@ -838,6 +838,14 @@ export default class DejaWindowExtension extends Extension {
         window.connectObject('notify::transient-for', () => this._releaseIfIneligible(window), this);
     }
 
+    // Secondary monitors have no independent workspace when Mutter restricts
+    // workspaces to the primary monitor. Use the intended destination while
+    // Wayland is still updating the window's monitor metadata.
+    _monitorHasWorkspaces(monitorIndex) {
+        return !Meta.prefs_get_workspaces_only_on_primary() ||
+            monitorIndex === Main.layoutManager.primaryIndex;
+    }
+
     // Applies the saved size and/or position, or falls back to centering if position is invalid/not requested.
     _applySavedState(window, identity, config) {
         const handle = this._handles.get(window);
@@ -960,7 +968,8 @@ export default class DejaWindowExtension extends Extension {
             const hasMaximizedAxis = window.maximized_horizontally || window.maximized_vertically;
 
             // Restore Workspace
-            if (config.restore_workspace && state.workspace !== undefined && state.workspace !== -1) {
+            if (config.restore_workspace && this._monitorHasWorkspaces(monitorIndex) &&
+                state.workspace !== undefined && state.workspace !== -1) {
                 const ws = global.workspace_manager.get_workspace_by_index(state.workspace);
                 if (ws) {
                     if (ws !== window.get_workspace()) window.change_workspace(ws);
@@ -977,7 +986,12 @@ export default class DejaWindowExtension extends Extension {
 
                             // Slight delay to ensure the window is visually positioned before switching
                             h.wsTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                                ws.activate(global.get_current_time());
+                                // Recheck after the delay: the window or primary monitor
+                                // may have changed while placement was settling.
+                                if (window.get_workspace() === ws &&
+                                    this._monitorHasWorkspaces(window.get_monitor())) {
+                                    ws.activate(global.get_current_time());
+                                }
                                 h.wsTimeoutId = 0;
                                 return GLib.SOURCE_REMOVE;
                             });
