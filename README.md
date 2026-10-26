@@ -13,7 +13,8 @@ HallwayWM remembers where applications belong and keeps open windows organized w
 
 - Persistent position, size, monitor and workspace rules for each application's main window.
 - Per-session layouts for all normal open windows, including additional windows of the same application.
-- Independent layouts for different monitor arrangements and primary displays.
+- Automatic display profiles identified by connected devices, screen arrangement and primary display.
+- Named profiles, independent layout copies and linked templates with explicit screen mapping.
 - Maximized, minimized, fullscreen, above and sticky state restoration.
 - Workspace handling that respects GNOME's primary-monitor workspace policy.
 - A **HallwayWM** submenu in the native window menu (`Alt+Space`) for rules and manual capture.
@@ -21,6 +22,23 @@ HallwayWM remembers where applications belong and keeps open windows organized w
 - Window-layout retention through screen locking, with restoration deferred until unlock.
 
 Rules and captured application profiles remain private in the user's dconf database. Live window snapshots stay in memory and expire when their windows close or the extension is disabled. HallwayWM opens no applications.
+
+## Display profiles
+
+Open **Display Profiles** in preferences. The connected screens select their profile automatically. Give it a name, arrange applications and use **Save Positions**, or save an individual application from its rule. Saving in a notebook-only setup keeps its positions separate from a docked setup. Saved main-window positions are applied when that setup returns; the active workspace stays unchanged during profile switches.
+
+A new setup starts with the desktop's current placement. Under **Reuse a Saved Layout**, select another profile and choose:
+
+- **Independent copy**: copy its saved positions, then edit the destination separately.
+- **Linked to source**: follow the source's saved positions. Local automatic and manual saving are disabled while linked; **Make Independent** preserves the resolved layout and allows local editing.
+
+Assign each source screen to a destination screen. Positions and sizes adapt proportionally to the destination's usable area. Copying replaces only the connected profile's saved positions. **Restore** reapplies the current profile to already-open main windows. Additional normal windows retain their own live KVM snapshots.
+
+Device identity uses the monitor's vendor, product and serial information. A connector is used when a serial is missing or ambiguous; identical devices with no unique identification cannot always be distinguished across ports. Existing geometry-only records remain available as layout templates, and a matching connected setup adopts its existing saved positions.
+
+## Application defaults
+
+**Use Default Application Rules** covers main windows without an active individual rule. Each restore option recalls a saved value; for example, **Restore Maximized State** restores either maximized or normal state. **Restore Workspace** places the window on its saved workspace, while **Follow Window to Its Workspace** also activates that workspace when opening the application. The global Active switch controls all HallwayWM behavior.
 
 ## Build and install
 

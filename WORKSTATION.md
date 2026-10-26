@@ -1,10 +1,10 @@
 # HallwayWM workstation build
 
-This branch maintains HallwayWM `0.1.0`, derived from Deja Window upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
+This branch maintains HallwayWM `0.2.0`, derived from Deja Window upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
 
 The build manages persistent application placement and live window layouts in one GNOME extension. It selects the first normal window per application for persistent rules, saves separate monitor-layout profiles, restores half-screen geometry correctly, and keeps rule editing available in normal window menus. It uses `hallwaywm@workstation.local` so catalog updates do not replace the custom build. Application identities, titles, rules and captured geometry stay in the user's private dconf database.
 
-The maintained sources are `src/extension.ts`, `src/sessionLayouts.ts`, `src/windowMenu.ts` and `src/prefs.ts`. `src/types.d.ts` shares the rule, capture and monitor-profile contracts. The original GPL-3.0 license is in `LICENSE`; [project credits](CREDITS.md) identify the source projects and contributions. The stable `org.gnome.shell.extensions.deja-window` GSettings schema and private dconf path preserve existing application rules and layout profiles.
+The placement engine is in `src/extension.ts` and `src/sessionLayouts.ts`. `src/displayProfiles.ts` supplies profile identity, copying and linked resolution; `src/profileManager.ts` integrates native monitor discovery and profile actions. `src/profilePreferences.ts`, `src/prefs.ts` and `src/windowMenu.ts` implement the native controls, sharing restore terminology through `src/restoreOptions.ts`. `src/types.d.ts` shares the rule, capture and monitor-profile contracts. The original GPL-3.0 license is in `LICENSE`; [project credits](CREDITS.md) identify the source projects and contributions. The stable `org.gnome.shell.extensions.deja-window` GSettings schema and private dconf path preserve existing application rules and layout profiles.
 
 Manual capture saves the currently selected normal, non-transient, taskbar-visible window, including a window excluded from automatic tracking as secondary. The title-bar menu captures its own window; preferences capture the most recently used matching window. Locked rules remain locked. Capture does not promote, move or automatically track a secondary window. Dialogs and utility surfaces remain ineligible, and capture reports failure while monitor-layout writes are suspended.
 
@@ -12,11 +12,19 @@ Workspace restoration follows Mutter's current workspace policy and the intended
 
 ## Open-window layouts
 
-`src/sessionLayouts.ts` captures the current geometry, monitor, workspace, maximized, minimized, fullscreen, above and sticky state of every normal, non-transient, taskbar-visible window. This includes additional windows of the same application and windows without persistent rules. Snapshots stay in memory, use the complete logical monitor arrangement and primary monitor as their key, and are removed when their windows close. Disabling the extension clears them.
+`src/sessionLayouts.ts` captures the current geometry, monitor, workspace, maximized, minimized, fullscreen, above and sticky state of every normal, non-transient, taskbar-visible window. This includes additional windows of the same application and windows without persistent rules. Snapshots stay in memory, use the device-aware display-profile key, and are removed when their windows close. Disabling the extension clears them.
 
-After a monitor change, one three-second settling callback restores the matching live snapshots through the same asynchronous placement engine as application rules. A live snapshot takes precedence over the application profile for the same open window. A main window encountering a layout for the first time may use its persistent application profile. Session restores preserve the active workspace and follow Mutter's primary-monitor workspace policy. Persistent learning and snapshot updates remain paused during the transition, including late Wayland configurations.
+After a monitor change, one three-second settling callback restores saved main-window positions for the automatically detected display profile. Persistent profiles take precedence over temporary live snapshots. Live snapshots restore additional windows and main windows without saved positions in that profile. All monitor-profile restores preserve the active workspace and follow Mutter's primary-monitor workspace policy. Persistent learning and snapshot updates remain paused during the transition, including late Wayland configurations.
 
 The extension participates in the user and unlock-dialog session modes to retain window identities and live layouts while the screen is locked. Lock mode hides the indicator, removes the window-menu integration and suspends restoration and saving. On unlock, monitor changes made while locked are restored; an unchanged monitor arrangement keeps its current placement. The Active switch pauses both application rules and session-layout handling.
+
+## Persistent display profiles
+
+Native Mutter monitor getters provide device identities. Logical screen position, size, scale and primary status complete the profile key; monitor enumeration order does not. Saved windows also retain the destination monitor identity. `display-profiles` stores names, monitor descriptions and optional source links, `active-display-profile` identifies the connected setup, and `profile-request` carries native preference actions and replies. These values and `window-app-states` remain private in dconf.
+
+Independent copies adapt geometry through explicit source-to-destination screen mappings. Linked profiles resolve source positions on use, including linked chains, and reject cycles. Saving into a linked profile is disabled. Detaching makes an independent copy of its currently resolved positions. Profile copying and link operations apply to main-window placement; unrelated display profiles remain intact. Application matching rules and restore flags apply across profiles.
+
+The first connected setup can adopt a matching geometry-only record. Unidentified saved layouts remain available as templates and are not automatically assigned to new physical devices. A new setup without saved positions keeps the desktop's current arrangement until positions are learned or explicitly saved.
 
 ## Build, installation and validation
 
@@ -26,13 +34,13 @@ The build requires Node.js 22 or newer, npm and the native `glib-compile-schemas
 
 Run `bash scripts/install.sh` as the desktop user after dependency installation. It builds the payload, installs regular files in `${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/hallwaywm@workstation.local` and compiles the installed schema. It preserves dconf preferences and does not reload the active Shell. After the first installation, sign out and back in so GNOME discovers the extension, then enable it with `gnome-extensions enable hallwaywm@workstation.local`. Subsequent JavaScript updates also require a new graphical login. `bash scripts/pack.sh` builds the same payload and creates the extension archive under `temp/`.
 
-Run `bash -n scripts/install.sh scripts/pack.sh` and `glib-compile-schemas --strict --dry-run src/schemas`. Installation can be checked with a temporary `XDG_DATA_HOME`. The native preferences smoke test constructs all three pages with disposable memory-backed rules and no visible window:
+Run `bash -n scripts/install.sh scripts/pack.sh` and `glib-compile-schemas --strict --dry-run src/schemas`. Installation can be checked with a temporary `XDG_DATA_HOME`. The native preferences smoke test constructs all four pages with disposable memory-backed rules and no visible window:
 
 ```sh
 GI_TYPELIB_PATH=/usr/lib/gnome-shell/girepository-1.0 LD_LIBRARY_PATH=/usr/lib/gnome-shell GSETTINGS_BACKEND=memory gjs -m tests/preferences.mjs
 ```
 
-The workstation repository's `tests/gnome_window_state_manager_integration.py` builds the pinned sources, verifies every payload hash and exercises the unified extension alone in an isolated GNOME session. The base workload covers seven Wayland/XWayland windows, repeated KVM transitions, primary-monitor changes, lock-mode monitor changes and immediate capture on enable. Its `--placement`, `--half-screen`, `--main-window` and `--workspaces` cases cover persistence, monitor transitions and window eligibility. Physical monitor/KVM acceptance remains a separate check.
+The workstation repository's `tests/gnome_window_state_manager_integration.py` builds the pinned sources, verifies every payload hash and exercises the unified extension alone in an isolated GNOME session. The base workload covers seven Wayland/XWayland windows, repeated KVM transitions, primary-monitor changes, lock-mode monitor changes and immediate capture on enable. Its `--placement`, `--half-screen`, `--main-window`, `--workspaces` and `--profiles` cases cover persistence, monitor transitions and window eligibility. The profile workload covers separate notebook/docked records, saved-profile priority, equal geometry with another simulated device identity, copy/link/detach actions and proportional monitor mapping. `npm run test:profiles` tests identity, geometry and linked-template semantics without a Shell. Physical monitor/KVM acceptance remains a separate check.
 
 JavaScript syntax is checked with the installed GJS parser (`Reflect.parse` with `target: "module"`); the isolated integration suite validates the Shell imports and behavior.
 

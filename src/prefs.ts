@@ -1,6 +1,7 @@
-import type {ApplicationStates, CaptureRequest, GlobalDefaults, MatchMode, MatchRule, RestoreFlags, RestoreKey, RestoreOption, WindowRule} from './types.js';
+import type {ApplicationStates, CaptureRequest, GlobalDefaults, MatchMode, MatchRule, RestoreFlags, RestoreKey, WindowRule} from './types.js';
 import Adw from 'gi://Adw';
 import { DisplayProfilesPage } from './profilePreferences.js';
+import { RESTORE_OPTIONS } from './restoreOptions.js';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
@@ -15,37 +16,7 @@ interface ConfigurationBackup {
     window_global_defaults?: GlobalDefaults;
 }
 
-// The restore options, in the order they're shown, shared by per-app rules and
-// Global Defaults — the same set and the same short labels as the window menu's
-// "Restore" section (see windowMenu.js RESTORE_TOGGLES), since both edit the
-// same fields. 'dependsOn' marks an option that only refines another one: it's
-// greyed out while its parent is off, and left out of the section's summary so
-// that stays a list of what actually gets restored.
-const RESTORE_OPTIONS: RestoreOption[] = [
-    { key: 'restore_size', label: 'Size', subtitle: 'Restore the saved width and height for the active display profile.' },
-    { key: 'restore_pos', label: 'Position', subtitle: 'Use the saved screen and position instead of default centering.' },
-    {
-        key: 'avoid_overlap',
-        label: 'Avoid Same-App Overlap',
-        subtitle: 'Allow the restored main window to shift when another window of the same app occupies that position.',
-        dependsOn: 'restore_pos',
-        defaultOn: true,
-    },
-    { key: 'restore_maximized', label: 'Maximized State', subtitle: 'Restore whether the window was maximized or in its normal size.' },
-    { key: 'restore_workspace', label: 'Workspace', subtitle: 'Move to the saved workspace when the destination screen supports workspaces.' },
-    {
-        key: 'switch_to_workspace',
-        label: 'Switch to Workspace',
-        subtitle: 'Also take you to that workspace when the application opens. Display-profile changes keep your current workspace.',
-        dependsOn: 'restore_workspace',
-    },
-    { key: 'restore_minimized', label: 'Minimized State', subtitle: 'Restore whether the window was minimized; a saved minimized window can open hidden.' },
-    { key: 'restore_above', label: 'Always on Top', subtitle: 'Restore whether the window was pinned above other windows.' },
-    { key: 'restore_sticky', label: 'Visible on All Workspaces', subtitle: 'Restore whether the window was pinned to appear on every workspace.' },
-];
-
-// Keeps the collapsed "Restore" row informative: what this rule actually
-// restores, or why it does nothing.
+// Summarize restored states without listing refinements of another option.
 const MAX_RESTORE_SUMMARY = 52;
 
 function restoreSummary(values: RestoreFlags) {
@@ -55,7 +26,7 @@ function restoreSummary(values: RestoreFlags) {
     if (active.length === 0) return 'Default window placement; no saved states restored';
     if (active.length === primary.length) return 'All saved states';
 
-    const text = active.map(option => option.label).join(', ');
+    const text = active.map(option => option.label.replace(/^Restore /, '')).join(', ');
     return text.length > MAX_RESTORE_SUMMARY
         ? `${text.slice(0, MAX_RESTORE_SUMMARY - 1)}…`
         : text;
@@ -600,7 +571,7 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
         // subtitle and the greying of dependent options in sync.
         const buildRestoreSection = (values: RestoreFlags, onChange: (key: RestoreKey, value: boolean) => void) => {
             const expander = new Adw.ExpanderRow({
-                title: 'Restore',
+                title: 'Restore Saved State',
                 subtitle: restoreSummary(values),
             });
 
@@ -1264,7 +1235,7 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
             // the risk model for every installed app at once, not just one the
             // user has already tested via an explicit per-app rule.
             const enabledRow = new Adw.ActionRow({
-                title: 'Enabled',
+                title: 'Use Default Application Rules',
                 subtitle: 'Apply these defaults to main windows without a matching individual rule. This is separate from HallwayWM’s Active switch.'
             });
             const enabledSwitch = new Gtk.Switch({ active: defaults.enabled, valign: Gtk.Align.CENTER });

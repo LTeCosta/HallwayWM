@@ -29,7 +29,8 @@ settings.set_string('display-profiles', JSON.stringify({
     office: {name: 'Office', monitors: [screen('office-screen', 'Office screen', true)]}
 }));
 settings.set_string('active-display-profile', 'home');
-const before = settings.get_string('window-app-configs');
+const preserved = ['window-app-configs', 'window-global-defaults', 'window-app-states', 'display-profiles'];
+const before = preserved.map(key => settings.get_string(key));
 const window = new Adw.PreferencesWindow();
 await preferences.fillPreferencesWindow(window);
 const pages=[];
@@ -40,7 +41,7 @@ function inspect(widget) {
 inspect(window);
 for (const title of ['Applications', 'Global Defaults', 'Display Profiles', 'Settings'])
     if (!pages.includes(title)) throw new Error('Missing preferences page: '+title);
-if (settings.get_string('window-app-configs') !== before)
-    throw new Error('Constructing preferences changed the fixture rules');
+if (preserved.some((key, index) => settings.get_string(key) !== before[index]))
+    throw new Error('Constructing preferences changed the fixture rules or profiles');
 window.close();
 print('Preferences smoke test passed: all four pages, display profile controls, typed rule forms and unchanged fixture rules');

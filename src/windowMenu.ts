@@ -1,5 +1,6 @@
 import type Meta from 'gi://Meta';
 import type HallwayWMExtension from './extension.js';
+import { RESTORE_OPTIONS } from './restoreOptions.js';
 import type {GlobalDefaults, MatchRule, RestoreFlags, RestoreKey, RestoreOption, RuleState, WindowRule} from './types.js';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
@@ -25,9 +26,7 @@ const NEW_RULE_DEFAULTS = {
     restore_sticky: true,
 };
 
-// The per-rule restore_* switches, in menu order. Labels are deliberately much
-// shorter than their prefs counterparts ("On All Workspaces" vs "Restore Always
-// on Visible Workspace"): the window menu is narrow and every label widens it.
+// The per-rule restore_* switches use the same wording as native preferences.
 // 'dependsOn' greys a switch out while the flag it refines is off.
 type MenuRestoreKey = Exclude<RestoreKey, 'avoid_overlap'>;
 interface MenuItems extends Record<MenuRestoreKey, PopupMenu.PopupSwitchMenuItem> {
@@ -43,16 +42,8 @@ interface MenuItems extends Record<MenuRestoreKey, PopupMenu.PopupSwitchMenuItem
     capture: PopupMenu.PopupMenuItem;
 }
 
-const RESTORE_TOGGLES: (RestoreOption & {key: MenuRestoreKey})[] = [
-    { key: 'restore_size', label: 'Size' },
-    { key: 'restore_pos', label: 'Position' },
-    { key: 'restore_maximized', label: 'Maximized' },
-    { key: 'restore_workspace', label: 'Workspace' },
-    { key: 'switch_to_workspace', label: 'Switch to Workspace', dependsOn: 'restore_workspace' },
-    { key: 'restore_minimized', label: 'Minimized' },
-    { key: 'restore_above', label: 'Always on Top' },
-    { key: 'restore_sticky', label: 'On All Workspaces' },
-];
+const RESTORE_TOGGLES = RESTORE_OPTIONS.filter(
+    (option): option is RestoreOption & {key: MenuRestoreKey} => option.key !== 'avoid_overlap');
 
 // Identity patterns (especially titles) can be arbitrarily long; the header
 // label would otherwise stretch the whole window menu.
@@ -336,7 +327,7 @@ export class HallwayWMMenu {
         // which is the *window* menu, so it would close this submenu — the very
         // thing it lives in. Showing/hiding plain items is both simpler and
         // free of that ownership problem.
-        items.restore = new PopupMenu.PopupMenuItem('Restore');
+        items.restore = new PopupMenu.PopupMenuItem('Restore Saved State');
         items.restore.add_child(new St.Bin({
             style_class: 'popup-menu-item-expander',
             x_expand: true,
