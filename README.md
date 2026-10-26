@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hallwaywm-logo.png">
+  <img src="src/icons/hallwaywm.png" alt="HallwayWM" height="128">
+</picture>
+
 # HallwayWM
 
 Window placement and monitor-layout management for GNOME Wayland.

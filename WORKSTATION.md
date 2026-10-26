@@ -35,3 +35,7 @@ GI_TYPELIB_PATH=/usr/lib/gnome-shell/girepository-1.0 LD_LIBRARY_PATH=/usr/lib/g
 The workstation repository's `tests/gnome_window_state_manager_integration.py` builds the pinned sources, verifies every payload hash and exercises the unified extension alone in an isolated GNOME session. The base workload covers seven Wayland/XWayland windows, repeated KVM transitions, primary-monitor changes, lock-mode monitor changes and immediate capture on enable. Its `--placement`, `--half-screen`, `--main-window` and `--workspaces` cases cover persistence, monitor transitions and window eligibility. Physical monitor/KVM acceptance remains a separate check.
 
 JavaScript syntax is checked with the installed GJS parser (`Reflect.parse` with `target: "module"`); the isolated integration suite validates the Shell imports and behavior.
+
+## Visual identity
+
+The panel uses the supplied `hallwaywm-tray-dark.png` and `hallwaywm-tray-light.png` variants, selecting them from the panel icon's effective foreground color. The preferences show `hallwaywm.png`; the README uses the supplied wordmark in dark mode and the application icon in light mode. Assets are copied unchanged from the supplied identity pack and recorded in [credits](CREDITS.md).

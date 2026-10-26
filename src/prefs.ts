@@ -154,6 +154,10 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
             title: 'Status',
             description: 'Remember application placement and restore open windows when monitors change.'
         });
+        statusGroup.set_header_suffix(new Gtk.Image({
+            gicon: Gio.icon_new_for_string(GLib.build_filenamev([this.path, 'icons', 'hallwaywm.png'])),
+            pixel_size: 64
+        }));
         settingsPage.add(statusGroup);
 
         const statusRow = new Adw.ActionRow({

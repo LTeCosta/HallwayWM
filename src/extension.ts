@@ -275,11 +275,18 @@ export default class HallwayWMExtension extends Extension {
         if (this._indicator) return;
 
         const indicator = new PanelMenu.Button(0.0, this.metadata.name, false) as PanelMenu.Button & {menu: PopupMenu.PopupMenu};
-        const iconPath = GLib.build_filenamev([this.path, 'icons', 'hallwaywm-symbolic.png']);
-        indicator.add_child(new St.Icon({
-            gicon: Gio.icon_new_for_string(iconPath),
-            style_class: 'system-status-icon'
-        }));
+        const icon = new St.Icon({style_class: 'system-status-icon'});
+        let variant = '';
+        const updateIcon = () => {
+            const color = icon.get_theme_node().get_foreground_color();
+            const next = color.red * 0.299 + color.green * 0.587 + color.blue * 0.114 >= 128 ? 'dark' : 'light';
+            if (next === variant) return;
+            variant = next;
+            const path = GLib.build_filenamev([this.path, 'icons', `hallwaywm-tray-${variant}.png`]);
+            icon.gicon = Gio.icon_new_for_string(path);
+        };
+        icon.connect('style-changed', updateIcon);
+        indicator.add_child(icon);
 
         const settingsItem = new PopupMenu.PopupMenuItem('HallwayWM Settings');
         settingsItem.connect('activate', () => this.openPreferences());
@@ -300,6 +307,7 @@ export default class HallwayWMExtension extends Extension {
         indicator.menu.addMenuItem(enabledItem);
 
         Main.panel.addToStatusArea(this.uuid, indicator);
+        updateIcon();
         this._indicator = indicator;
     }
 
