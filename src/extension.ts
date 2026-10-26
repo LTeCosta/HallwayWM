@@ -1,5 +1,4 @@
-// Restore application placement after the destination monitor settles, with
-// per-layout profiles coordinated with Window State Manager.
+// Coordinate persistent application rules and live layouts through one placement engine.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -10,6 +9,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { DejaWindowMenu } from './windowMenu.js';
+import { SessionLayouts } from './sessionLayouts.js';
 import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, PendingRestore, RestoreFlags, WindowHandle, WindowRule} from './types.js';
 
 const DEBUG = false;
@@ -39,6 +39,9 @@ const CAPTURE_ALL_FLAGS = {
 // Which form to use is decided per call from the method's arity, since a single
 // zip serves the whole 46–50 range declared in metadata.json.
 const MAXIMIZE_BOTH = 3;
+const SESSION_RESTORE_FLAGS: RestoreFlags = {
+    ...CAPTURE_ALL_FLAGS, avoid_overlap: false, switch_to_workspace: false
+};
 
 function maximizeArgs(method: {length: number}): [] | [number] {
     return typeof method === 'function' && method.length > 0 ? [MAXIMIZE_BOTH] : [];
@@ -71,7 +74,10 @@ export default class DejaWindowExtension extends Extension {
     declare _secondaryWindows: WeakSet<Meta.Window>;
     declare _functionalityEnabled: boolean;
     declare _indicator: PanelMenu.Button | null;
-    declare _disabledByLock: boolean;
+    declare _sessionLocked: boolean;
+    declare _layoutRestorePending: boolean;
+    declare _sessionLayouts: SessionLayouts | null;
+    declare _sessionHandles: Map<Meta.Window, WindowHandle>;
     declare _adoptIdleId: number;
     declare _adoptWithoutRestore: boolean;
     declare _probes: Map<Meta.Window, number[]>;
@@ -83,13 +89,17 @@ export default class DejaWindowExtension extends Extension {
 
         // Track window listeners and their bounded restoration work.
         this._handles = new Map();
+        this._sessionHandles = new Map();
+        this._sessionLayouts = null;
+        this._sessionLocked = Main.sessionMode.currentMode === 'unlock-dialog';
+        this._layoutRestorePending = false;
 
         // Cache for configurations to avoid parsing JSON on every window creation
         this._configs = [];
         this._globalDefaults = {};
         this._layoutSaveAfter = 0;
         this._layoutRestoreId = 0;
-        // Retain weak window identities across lock/unlock adoption.
+        // Retain window identities across changes to application-rule tracking.
         this._windowLayouts ??= new WeakMap();
         // A secondary window keeps its role through settings changes and unlocks.
         this._secondaryWindows ??= new WeakSet();
@@ -102,10 +112,11 @@ export default class DejaWindowExtension extends Extension {
         this._settings!.connectObject('changed::functionality-enabled', () => {
             this._functionalityEnabled = this._settings!.get_boolean('functionality-enabled');
             if (!this._functionalityEnabled) {
-                for (const handle of this._handles.values()) {
-                    this._cancelRestore(handle);
-                }
+                this._cancelAllRestores();
+                this._sessionLayouts?.suspend();
             } else {
+                if (this._layoutRestorePending) this._scheduleLayoutRestore();
+                this._sessionLayouts?.scheduleSave();
                 // Windows opened while bypassed were never adopted; pick them up now.
                 this._adoptUnmanagedWindows();
                 for (const [window, handle] of this._handles) {
@@ -155,7 +166,7 @@ export default class DejaWindowExtension extends Extension {
             this._queueRestoreCompletion(window);
         }, this);
         global.display.connectObject('grab-op-begin', (_display: Meta.Display, window: Meta.Window) => {
-            const handle = this._handles.get(window);
+            const handle = this._getRestoreHandle(window);
             if (handle && !handle.isRestoreApplied) {
                 // An explicit user move takes ownership of the placement.
                 this._cancelRestore(handle);
@@ -163,23 +174,17 @@ export default class DejaWindowExtension extends Extension {
             }
         }, this);
 
-        // Handle already existing windows (Crucial for X11 and reload)
-        // We use an idle callback to ensure the loop starts after full initialization.
-        // The id is kept so disable() can drop the source if it never got to run.
-        // Locking the session disables the extension and unlocking enables it again (metadata.json
-        // declares no 'unlock-dialog' session mode), so this walk also runs on every unlock. Restoring
-        // windows that are already placed is wrong there: it re-applies maximized/workspace state and,
-        // since Mutter's make_above()/unmake_above() raise the window, pulls the app to the front of
-        // the stack. After a lock the still-open windows are re-adopted for saving only.
-        const adoptWithoutRestore = this._disabledByLock === true;
-        this._disabledByLock = false;
+        // Existing windows retain their placement when the extension is enabled.
+        // New windows still receive the persistent application rules.
+        this._sessionLayouts = new SessionLayouts(this);
+        Main.sessionMode.connectObject('updated', () => this._onSessionModeChanged(), this);
 
         this._adoptIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             this._adoptIdleId = 0;
             // Include transient surfaces so their secondary role survives parent closure.
             const windows = global.get_window_actors().map(actor => actor.meta_window);
             // Read by _setupListeners for the windows adopted in this loop only.
-            this._adoptWithoutRestore = adoptWithoutRestore;
+            this._adoptWithoutRestore = true;
             for (const window of windows) {
                 this._onWindowCreated(window);
             }
@@ -187,18 +192,10 @@ export default class DejaWindowExtension extends Extension {
             return GLib.SOURCE_REMOVE;
         });
 
-        // Let Mutter and Window State Manager settle after KVM topology changes.
         Main.layoutManager.connectObject('monitors-changed', () => {
-            this._layoutSaveAfter = GLib.get_monotonic_time() + 5 * 1000 * 1000;
-            for (const handle of this._handles.values()) {
-                this._cancelRestore(handle);
-            }
-            if (this._layoutRestoreId) GLib.source_remove(this._layoutRestoreId);
-            this._layoutRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
-                this._layoutRestoreId = 0;
-                this._restoreNewLayouts();
-                return GLib.SOURCE_REMOVE;
-            });
+            this._layoutRestorePending = true;
+            this._sessionLayouts?.topologyChanged();
+            this._scheduleLayoutRestore();
         }, this);
 
         // Initialize probes map
@@ -206,14 +203,16 @@ export default class DejaWindowExtension extends Extension {
 
         // "Deja Window" submenu injected into GNOME's window (title bar) menu
         this._windowMenu = new DejaWindowMenu(this);
-        this._windowMenu.enable();
+        if (!this._sessionLocked) this._windowMenu.enable();
     }
 
     disable() {
-        // A session lock switches GNOME to the 'unlock-dialog' session mode, which metadata.json does
-        // not declare, so the extension is disabled here and enabled again on unlock. Remember it, so
-        // the adopt walk in the next enable() re-tracks the still-open windows without restoring them.
-        this._disabledByLock = Main.sessionMode.currentMode === 'unlock-dialog';
+        this._sessionLayouts?.destroy();
+        this._sessionLayouts = null;
+        this._cancelAllRestores();
+        this._sessionHandles.clear();
+        Main.sessionMode.disconnectObject(this);
+        this._layoutRestorePending = false;
 
         // Drop the adopt-existing-windows idle source if it is still pending
         if (this._adoptIdleId) {
@@ -264,7 +263,7 @@ export default class DejaWindowExtension extends Extension {
     // --- TOP BAR INDICATOR ---
 
     _updateIndicator() {
-        const show = this._settings!.get_boolean('show-indicator');
+        const show = !this._sessionLocked && this._settings!.get_boolean('show-indicator');
         if (show) {
             this._createIndicator();
         } else {
@@ -406,26 +405,92 @@ export default class DejaWindowExtension extends Extension {
             [monitor.x, monitor.y, monitor.width, monitor.height]));
     }
 
-    // Window State Manager owns layouts already visited by a live window.
-    // A window opened while the LG is absent has no live docked state yet;
-    // use its persisted app profile on the first visit to that layout.
+    _cancelAllRestores() {
+        for (const handle of [...this._handles.values(), ...this._sessionHandles.values()]) {
+            this._cancelRestore(handle);
+        }
+    }
+
+    _onSessionModeChanged() {
+        const locked = Main.sessionMode.currentMode === 'unlock-dialog';
+        if (locked === this._sessionLocked) return;
+        this._sessionLocked = locked;
+        this._updateIndicator();
+        if (locked) {
+            this._windowMenu?.disable();
+            this._sessionLayouts?.suspend();
+            this._cancelAllRestores();
+            for (const handle of [...this._handles.values(), ...this._sessionHandles.values()]) {
+                handle.isRestoreApplied = true;
+            }
+        } else {
+            this._windowMenu?.enable();
+            this._adoptWithoutRestore = true;
+            this._adoptUnmanagedWindows();
+            this._adoptWithoutRestore = false;
+            if (this._layoutRestorePending) this._scheduleLayoutRestore();
+            this._sessionLayouts?.scheduleSave();
+        }
+    }
+
+    _scheduleLayoutRestore() {
+        this._layoutSaveAfter = GLib.get_monotonic_time() + 5 * 1000 * 1000;
+        this._cancelAllRestores();
+        if (this._layoutRestoreId) GLib.source_remove(this._layoutRestoreId);
+        this._layoutRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+            this._layoutRestoreId = 0;
+            this._restoreNewLayouts();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // Live snapshots take precedence for the same open window. An application
+    // profile fills only a layout that this window has never visited.
     _restoreNewLayouts() {
-        if (!this._functionalityEnabled || !this._settings) return;
+        if (!this._functionalityEnabled || this._sessionLocked || !this._settings) return;
+        this._layoutRestorePending = false;
+        const restored = this._sessionLayouts?.restore() ?? new Set<Meta.Window>();
         const layoutKey = this._layoutKey();
-        let states: ApplicationStates;
+        let states: ApplicationStates = {};
         try {
-            states = JSON.parse(this._settings!.get_string('window-app-states')) || {};
+            states = JSON.parse(this._settings.get_string('window-app-states')) || {};
         } catch (e) {
-            return;
+            console.error('[DejaWindow] Error reading layout profiles:', e);
         }
         for (const [window, handle] of this._handles) {
-            if (handle.visitedLayouts.has(layoutKey)) continue;
+            if (restored.has(window) || handle.visitedLayouts.has(layoutKey)) continue;
             handle.visitedLayouts.add(layoutKey);
             const effective = this._getEffectiveConfig(window);
             if (!effective || !states[effective.identity]?.layouts?.[layoutKey]) continue;
             handle.isRestoreApplied = false;
             this._applySavedState(window, effective.identity, effective.config);
         }
+        this._sessionLayouts?.scheduleSave();
+    }
+
+    _getRestoreHandle(window: Meta.Window) {
+        return this._sessionHandles.get(window) ?? this._handles.get(window);
+    }
+
+    _forgetSessionWindow(window: Meta.Window) {
+        const handle = this._sessionHandles.get(window);
+        if (handle) this._cancelRestore(handle);
+        this._sessionHandles.delete(window);
+    }
+
+    _restoreSessionWindow(window: Meta.Window, state: LayoutState) {
+        let handle = this._getRestoreHandle(window);
+        if (!handle) {
+            handle = {
+                visitedLayouts: new Set(), timeoutId: 0, restoreTimeoutId: 0,
+                restoreIdleId: 0, pendingRestore: null, isRestoreApplied: false, actors: []
+            };
+            this._sessionHandles.set(window, handle);
+        }
+        this._cancelRestore(handle);
+        handle.isRestoreApplied = false;
+        handle.visitedLayouts.add(this._layoutKey());
+        this._applySavedState(window, '', SESSION_RESTORE_FLAGS, state);
     }
 
     // Helper to find a matching config for a given Window
@@ -636,6 +701,7 @@ export default class DejaWindowExtension extends Extension {
 
     // Helper to handle window creation. Records WM_CLASS and checks if we should manage the window.
     _onWindowCreated(window: Meta.Window | null) {
+        if (window) this._sessionLayouts?.track(window);
         // First check: Is this a manage-able window?
         if (!this._isValidManagedWindow(window)) return;
 
@@ -699,7 +765,7 @@ export default class DejaWindowExtension extends Extension {
     // Helper to check if we should manage a window. If so, sets up listeners.
     _checkAndSetup(window: Meta.Window | null) {
         // Bypassed: skip adopting new windows entirely, no side effects.
-        if (!this._functionalityEnabled) return false;
+        if (!this._functionalityEnabled || this._sessionLocked) return false;
 
         // Double check validity before setup
         if (!this._isValidManagedWindow(window)) return false;
@@ -716,6 +782,7 @@ export default class DejaWindowExtension extends Extension {
     // Sets up specific listeners for configured windows to handle resizing, positioning, and saving state.
     _setupListeners(window: Meta.Window, identity: string) {
         if (this._handles.has(window)) return;
+        this._forgetSessionWindow(window);
 
         debug('[DejaWindow] Setup listeners for:', identity);
 
@@ -728,8 +795,7 @@ export default class DejaWindowExtension extends Extension {
             restoreTimeoutId: 0,        // Bound a pending monitor transition
             restoreIdleId: 0,           // Coalesce restore work outside signal handlers
             pendingRestore: null,
-            // Track if restore has been applied. Windows re-adopted after a session unlock start
-            // out as already restored: they keep saving, but are never re-placed.
+            // Existing windows adopted on enable or unlock keep their placement.
             isRestoreApplied: this._adoptWithoutRestore === true,
             actors: []                  // Track actors to disconnectObject if window closes
         };
@@ -884,11 +950,11 @@ export default class DejaWindowExtension extends Extension {
     }
 
     // Applies the saved size and/or position, or falls back to centering if position is invalid/not requested.
-    _applySavedState(window: Meta.Window, identity: string, config: RestoreFlags) {
-        const handle = this._handles.get(window);
+    _applySavedState(window: Meta.Window, identity: string, config: RestoreFlags, sessionState?: LayoutState) {
+        const handle = this._getRestoreHandle(window);
         // A restore already applied — or already scheduled, since several signals can
         // trigger one before the idle runs — needs no second source.
-        if (!this._functionalityEnabled || !handle || handle.isRestoreApplied ||
+        if (!this._functionalityEnabled || this._sessionLocked || !handle || handle.isRestoreApplied ||
             handle.pendingRestore || handle.restoreIdleId) return;
 
         // Use idle_add LOW PRIORITY to ensure we run after any pending internal Mutter layout logic.
@@ -916,8 +982,10 @@ export default class DejaWindowExtension extends Extension {
                 return GLib.SOURCE_REMOVE;
             }
 
-            // The window may have changed type since the restore was scheduled.
-            if (this._releaseIfIneligible(window)) return GLib.SOURCE_REMOVE;
+            // Session snapshots also cover additional normal windows of an application.
+            if (sessionState ? !this._isMainWindowCandidate(window) : this._releaseIfIneligible(window)) {
+                return GLib.SOURCE_REMOVE;
+            }
 
             const needsRestore = config.restore_size || config.restore_pos || config.restore_maximized ||
                 config.restore_workspace || config.restore_minimized || config.restore_above || config.restore_sticky;
@@ -936,7 +1004,7 @@ export default class DejaWindowExtension extends Extension {
             }
 
             // Get saved state for this window
-            const state = savedStates[identity]?.layouts?.[this._layoutKey()] || {};
+            const state = sessionState ?? savedStates[identity]?.layouts?.[this._layoutKey()] ?? {};
             debug('[DejaWindow] Restoring state for:', identity, state);
             const rect = window.get_frame_rect();
 
@@ -956,7 +1024,7 @@ export default class DejaWindowExtension extends Extension {
                 targetMonitor < global.display.get_n_monitors() ? targetMonitor : window.get_monitor();
             const pending: PendingRestore = {
                 identity, layoutKey: this._layoutKey(), monitor: monitorIndex, geometry: null,
-                monitorFrame: rect, config, state
+                monitorFrame: rect, config, state, session: sessionState !== undefined
             };
             handle.pendingRestore = pending;
             if (monitorIndex !== window.get_monitor()) {
@@ -983,7 +1051,8 @@ export default class DejaWindowExtension extends Extension {
             targetY = workArea.y + (workArea.height - targetH) / 2;
 
             // Restore position if requested and valid
-            if (config.restore_pos && state.x !== undefined && state.y !== undefined && this._isPointInWorkArea(state.x, state.y, workArea)) {
+            if (config.restore_pos && state.x !== undefined && state.y !== undefined &&
+                (sessionState || this._isPointInWorkArea(state.x, state.y, workArea))) {
                 targetX = state.x;
                 targetY = state.y;
             }
@@ -1001,6 +1070,7 @@ export default class DejaWindowExtension extends Extension {
 
             debug(`[DejaWindow] Applying State for ${identity}: ${targetW}x${targetH} @ ${targetX},${targetY}`);
 
+            if (sessionState && window.fullscreen) window.unmake_fullscreen();
             const hasMaximizedAxis = window.maximized_horizontally || window.maximized_vertically;
 
             // If the window is already maximized and we are NOT configured to restore maximized state,
@@ -1043,7 +1113,7 @@ export default class DejaWindowExtension extends Extension {
     }
 
     _queueRestoreCompletion(window: Meta.Window) {
-        const handle = this._handles.get(window);
+        const handle = this._getRestoreHandle(window);
         if (!handle?.pendingRestore || handle.restoreIdleId) return;
         // Position changes can precede Mutter's monitor update in the same signal dispatch.
         handle.restoreIdleId = GLib.idle_add(GLib.PRIORITY_LOW, () => {
@@ -1054,14 +1124,18 @@ export default class DejaWindowExtension extends Extension {
     }
 
     _finishRestore(window: Meta.Window) {
-        const handle = this._handles.get(window);
+        const handle = this._getRestoreHandle(window);
         const pending = handle?.pendingRestore;
         if (!handle || !pending) return;
-        if (this._releaseIfIneligible(window)) return;
+        if (pending.session ? !this._isMainWindowCandidate(window) : this._releaseIfIneligible(window)) {
+            this._cancelRestore(handle);
+            return;
+        }
         const effective = this._getEffectiveConfig(window);
-        if (!this._functionalityEnabled || !window.get_workspace() ||
-            pending.layoutKey !== this._layoutKey() || effective?.identity !== pending.identity ||
-            effective.config !== pending.config) {
+        const changedRule = !pending.session &&
+            (effective?.identity !== pending.identity || effective.config !== pending.config);
+        if (!this._functionalityEnabled || this._sessionLocked || !window.get_workspace() ||
+            pending.layoutKey !== this._layoutKey() || changedRule) {
             this._cancelRestore(handle);
             return;
         }
@@ -1128,7 +1202,11 @@ export default class DejaWindowExtension extends Extension {
             this._maximizeWindow(window);
         }
 
+        if (pending.session && state.fullscreen !== undefined && state.fullscreen !== window.fullscreen) {
+            state.fullscreen ? window.make_fullscreen() : window.unmake_fullscreen();
+        }
         handle.isRestoreApplied = true;
+        this._sessionLayouts?.scheduleSave();
         if (workspace && config.switch_to_workspace && window.get_workspace() === workspace &&
             workspace !== global.workspace_manager.get_active_workspace()) {
             workspace.activate(global.get_current_time());
@@ -1137,7 +1215,7 @@ export default class DejaWindowExtension extends Extension {
 
     // Saves the current window geometry to GSettings for persistence across sessions.
     _performSave(identity: string, monitorIndex: number, x: number, y: number, w: number, h: number, config: RestoreFlags, isMaximized: boolean, workspaceIndex: number, minimized: boolean, above: boolean, sticky: boolean) {
-        if (!this._settings || GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
+        if (!this._settings || this._sessionLocked || GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
 
         debug(`[DejaWindow] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
 

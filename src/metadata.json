@@ -1,6 +1,6 @@
 {
   "name": "Deja Window",
-  "description": "Persistent application window placement for the workstation monitor layouts.",
+  "description": "Application placement and live window layouts across monitor changes.",
   "uuid": "deja-window@workstation.local",
   "settings-schema": "org.gnome.shell.extensions.deja-window",
   "shell-version": [
@@ -8,5 +8,9 @@
   ],
   "url": "https://github.com/ihpled/deja-window",
   "version": 17,
-  "version-name": "17-workstation.8"
+  "version-name": "17-workstation.9",
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ]
 }

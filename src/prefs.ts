@@ -151,7 +151,8 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
         // from the indicator stays in sync either way. Placed first/prominently
         // since it's the master switch for all window tracking/restore/save.
         const statusGroup = new Adw.PreferencesGroup({
-            title: 'Status'
+            title: 'Status',
+            description: 'Remember application placement and restore open windows when monitors change.'
         });
         settingsPage.add(statusGroup);
 

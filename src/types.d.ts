@@ -42,6 +42,7 @@ export interface LayoutState {
     width?: number;
     height?: number;
     maximized?: boolean;
+    fullscreen?: boolean;
     minimized?: boolean;
     above?: boolean;
     sticky?: boolean;
@@ -64,6 +65,7 @@ export interface PendingRestore {
     monitorFrame: WindowGeometry;
     config: RestoreFlags;
     state: LayoutState;
+    session: boolean;
 }
 export interface WindowHandle {
     visitedLayouts: Set<string>;
