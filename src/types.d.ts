@@ -50,11 +50,20 @@ export interface ApplicationState extends LayoutState {
     layouts?: Record<string, LayoutState>;
 }
 export type ApplicationStates = Record<string, ApplicationState>;
+export interface PendingRestore {
+    identity: string;
+    layoutKey: string;
+    monitor: number;
+    geometry: {x: number; y: number; width: number; height: number} | null;
+    config: RestoreFlags;
+    state: LayoutState;
+}
 export interface WindowHandle {
     visitedLayouts: Set<string>;
     timeoutId: number;
-    wsTimeoutId: number;
+    restoreTimeoutId: number;
     restoreIdleId: number;
+    pendingRestore: PendingRestore | null;
     isRestoreApplied: boolean;
     actors: Meta.WindowActor[];
 }

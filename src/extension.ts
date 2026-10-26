@@ -1,5 +1,5 @@
-// Workstation modifications, 2026-10-23 and 2026-10-24: restore workspace before geometry,
-// persist monitor-layout profiles and coordinate KVM transitions with Window State Manager.
+// Restore application placement after the destination monitor settles, with
+// per-layout profiles coordinated with Window State Manager.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -10,7 +10,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { DejaWindowMenu } from './windowMenu.js';
-import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, RestoreFlags, WindowHandle, WindowRule} from './types.js';
+import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, PendingRestore, RestoreFlags, WindowHandle, WindowRule} from './types.js';
 
 const DEBUG = false;
 
@@ -81,7 +81,7 @@ export default class DejaWindowExtension extends Extension {
         // Initialize settings from schema
         this._settings = this.getSettings();
 
-        // Map<Window, { timeoutId: number, wsTimeoutId: number, isRestoreApplied: boolean, actors: Meta.WindowActor[] }>
+        // Track window listeners and their bounded restoration work.
         this._handles = new Map();
 
         // Cache for configurations to avoid parsing JSON on every window creation
@@ -101,9 +101,18 @@ export default class DejaWindowExtension extends Extension {
         this._functionalityEnabled = this._settings!.get_boolean('functionality-enabled');
         this._settings!.connectObject('changed::functionality-enabled', () => {
             this._functionalityEnabled = this._settings!.get_boolean('functionality-enabled');
-            if (this._functionalityEnabled) {
+            if (!this._functionalityEnabled) {
+                for (const handle of this._handles.values()) {
+                    this._cancelRestore(handle);
+                }
+            } else {
                 // Windows opened while bypassed were never adopted; pick them up now.
                 this._adoptUnmanagedWindows();
+                for (const [window, handle] of this._handles) {
+                    if (handle.isRestoreApplied) continue;
+                    const effective = this._getEffectiveConfig(window);
+                    if (effective) this._applySavedState(window, effective.identity, effective.config);
+                }
             }
         }, this);
 
@@ -142,6 +151,18 @@ export default class DejaWindowExtension extends Extension {
             this._onWindowCreated(window);
         }, this);
 
+        global.display.connectObject('window-entered-monitor', (_display: Meta.Display, _monitor: number, window: Meta.Window) => {
+            this._queueRestoreCompletion(window);
+        }, this);
+        global.display.connectObject('grab-op-begin', (_display: Meta.Display, window: Meta.Window) => {
+            const handle = this._handles.get(window);
+            if (handle && !handle.isRestoreApplied) {
+                // An explicit user move takes ownership of the placement.
+                this._cancelRestore(handle);
+                handle.isRestoreApplied = true;
+            }
+        }, this);
+
         // Handle already existing windows (Crucial for X11 and reload)
         // We use an idle callback to ensure the loop starts after full initialization.
         // The id is kept so disable() can drop the source if it never got to run.
@@ -169,6 +190,9 @@ export default class DejaWindowExtension extends Extension {
         // Let Mutter and Window State Manager settle after KVM topology changes.
         Main.layoutManager.connectObject('monitors-changed', () => {
             this._layoutSaveAfter = GLib.get_monotonic_time() + 5 * 1000 * 1000;
+            for (const handle of this._handles.values()) {
+                this._cancelRestore(handle);
+            }
             if (this._layoutRestoreId) GLib.source_remove(this._layoutRestoreId);
             this._layoutRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
                 this._layoutRestoreId = 0;
@@ -565,16 +589,7 @@ export default class DejaWindowExtension extends Extension {
             GLib.source_remove(handle.timeoutId);
             handle.timeoutId = 0;
         }
-        // Remove workspace timeout if pending
-        if (handle.wsTimeoutId) {
-            GLib.source_remove(handle.wsTimeoutId);
-            handle.wsTimeoutId = 0;
-        }
-        // Remove the restore idle source if it has not run yet
-        if (handle.restoreIdleId) {
-            GLib.source_remove(handle.restoreIdleId);
-            handle.restoreIdleId = 0;
-        }
+        this._cancelRestore(handle);
 
         // Disconnect all signals on the window associated with 'this' extension
         // This replaces the manual loop and try-catch blocks
@@ -710,8 +725,9 @@ export default class DejaWindowExtension extends Extension {
         const handle: WindowHandle = {
             visitedLayouts,
             timeoutId: 0,               // Store timeout ID
-            wsTimeoutId: 0,             // Store workspace timeout ID
-            restoreIdleId: 0,           // Store the pending restore idle ID
+            restoreTimeoutId: 0,        // Bound a pending monitor transition
+            restoreIdleId: 0,           // Coalesce restore work outside signal handlers
+            pendingRestore: null,
             // Track if restore has been applied. Windows re-adopted after a session unlock start
             // out as already restored: they keep saving, but are never re-placed.
             isRestoreApplied: this._adoptWithoutRestore === true,
@@ -788,6 +804,10 @@ export default class DejaWindowExtension extends Extension {
 
             // If we haven't finished the initial restore, don't save anything!
             // Avoid overwriting saved state with partial coordinates during opening.
+            if (handle.pendingRestore) {
+                this._queueRestoreCompletion(window);
+                return;
+            }
             if (!handle.isRestoreApplied) return;
 
             if (handle.timeoutId) {
@@ -868,7 +888,8 @@ export default class DejaWindowExtension extends Extension {
         const handle = this._handles.get(window);
         // A restore already applied — or already scheduled, since several signals can
         // trigger one before the idle runs — needs no second source.
-        if (!handle || handle.isRestoreApplied || handle.restoreIdleId) return;
+        if (!this._functionalityEnabled || !handle || handle.isRestoreApplied ||
+            handle.pendingRestore || handle.restoreIdleId) return;
 
         // Use idle_add LOW PRIORITY to ensure we run after any pending internal Mutter layout logic.
         // This is not a delay (time-based), but a priority-based scheduling. The id lives on the
@@ -898,17 +919,15 @@ export default class DejaWindowExtension extends Extension {
             // The window may have changed type since the restore was scheduled.
             if (this._releaseIfIneligible(window)) return GLib.SOURCE_REMOVE;
 
-            handle.isRestoreApplied = true;
-
             const needsRestore = config.restore_size || config.restore_pos || config.restore_maximized ||
                 config.restore_workspace || config.restore_minimized || config.restore_above || config.restore_sticky;
 
             if (!needsRestore) {
+                handle.isRestoreApplied = true;
                 this._centerWindow(window);
                 return GLib.SOURCE_REMOVE;
             }
 
-            // ... (Rest of logic remains mostly same, just retrieving settings) ...
             let savedStates: ApplicationStates = {};
             try {
                 savedStates = JSON.parse(this._settings!.get_string('window-app-states')) || {};
@@ -919,9 +938,6 @@ export default class DejaWindowExtension extends Extension {
             // Get saved state for this window
             const state = savedStates[identity]?.layouts?.[this._layoutKey()] || {};
             debug('[DejaWindow] Restoring state for:', identity, state);
-            // Safety checks for X11
-            if (!state) return GLib.SOURCE_REMOVE;
-
             const rect = window.get_frame_rect();
 
             // Retrieve target dimensions
@@ -934,30 +950,32 @@ export default class DejaWindowExtension extends Extension {
                 targetH = state.height;
             }
 
-            // Before we can determine the work area, we need to make sure the window is located on the correct monitor.
-            // So, if we are restoring position, then check and move to the saved monitor.
             const targetMonitor = state.monitor ?? window.get_monitor();
-            // The saved monitor index may no longer exist (monitor unplugged, layout changed since last save).
-            // Passing an out-of-range index to move_to_monitor() hits a fatal assertion in Mutter and crashes
-            // the whole gnome-shell process, so it must be validated against the currently connected monitors.
-            if (config.restore_pos && targetMonitor !== window.get_monitor() &&
-                targetMonitor >= 0 && targetMonitor < global.display.get_n_monitors()) {
-              // Restore (move) the window to the saved monitor
-              window.move_to_monitor(targetMonitor);
-            }
-
-            // Retrieve target position
-            let targetX = rect.x;
-            let targetY = rect.y;
-            // Wayland can update get_monitor() after this move returns. Clamp against
-            // the intended monitor, rather than the previous monitor's work area.
+            // Invalid monitor indices can crash Mutter. Use the current monitor as fallback.
             const monitorIndex = config.restore_pos && targetMonitor >= 0 &&
                 targetMonitor < global.display.get_n_monitors() ? targetMonitor : window.get_monitor();
+            const pending: PendingRestore = {
+                identity, layoutKey: this._layoutKey(), monitor: monitorIndex, geometry: null, config, state
+            };
+            handle.pendingRestore = pending;
+            if (monitorIndex !== window.get_monitor()) {
+                window.move_to_monitor(monitorIndex);
+            }
+
+            // Compute geometry from the intended destination while Wayland configures it.
+            let targetX = rect.x;
+            let targetY = rect.y;
             const workspace = window.get_workspace();
-            if (!workspace) return GLib.SOURCE_REMOVE;
+            if (!workspace) {
+                this._cancelRestore(handle);
+                return GLib.SOURCE_REMOVE;
+            }
 
             const workArea = workspace.get_work_area_for_monitor(monitorIndex);
-            if (!workArea) return GLib.SOURCE_REMOVE;
+            if (!workArea) {
+                this._cancelRestore(handle);
+                return GLib.SOURCE_REMOVE;
+            }
 
             // Default to centered position as fallback
             targetX = workArea.x + (workArea.width - targetW) / 2;
@@ -984,39 +1002,6 @@ export default class DejaWindowExtension extends Extension {
 
             const hasMaximizedAxis = window.maximized_horizontally || window.maximized_vertically;
 
-            // Restore Workspace
-            if (config.restore_workspace && this._monitorHasWorkspaces(monitorIndex) &&
-                state.workspace !== undefined && state.workspace !== -1) {
-                const ws = global.workspace_manager.get_workspace_by_index(state.workspace);
-                if (ws) {
-                    if (ws !== window.get_workspace()) window.change_workspace(ws);
-
-                    // Switch to desktop if configured
-                    if (config.switch_to_workspace && ws !== global.workspace_manager.get_active_workspace()) {
-                        const h = this._handles.get(window);
-                        if (h) {
-                            // Clear any pending timeout
-                            if (h.wsTimeoutId) {
-                                GLib.source_remove(h.wsTimeoutId);
-                                h.wsTimeoutId = 0;
-                            }
-
-                            // Slight delay to ensure the window is visually positioned before switching
-                            h.wsTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                                // Recheck after the delay: the window or primary monitor
-                                // may have changed while placement was settling.
-                                if (window.get_workspace() === ws &&
-                                    this._monitorHasWorkspaces(window.get_monitor())) {
-                                    ws.activate(global.get_current_time());
-                                }
-                                h.wsTimeoutId = 0;
-                                return GLib.SOURCE_REMOVE;
-                            });
-                        }
-                    }
-                }
-            }
-
             // If the window is already maximized and we are NOT configured to restore maximized state,
             // we should not interfere (do not unmaximize, do not apply geometry).
             // If we ARE configured to restore maximized state, we proceed to unmaximize and apply geometry
@@ -1025,36 +1010,113 @@ export default class DejaWindowExtension extends Extension {
                 if (hasMaximizedAxis) {
                     this._unmaximizeWindow(window);
                 }
-                // Apply geometry
-                window.move_resize_frame(false, targetX, targetY, targetW, targetH);
+                pending.geometry = {x: targetX, y: targetY, width: targetW, height: targetH};
+                if (window.get_monitor() !== monitorIndex) {
+                    window.move_resize_frame(false, targetX, targetY, targetW, targetH);
+                }
             }
 
-            // Restore Always on Visible Workspace (Sticky)
-            // Each of the three toggles below is applied only when it actually differs from the
-            // window's current state: these Meta calls are not free no-ops. In particular
-            // make_above()/unmake_above() raise the window to the top of the stack, so calling
-            // unmake_above() on a window that is already not above still brings it to the front.
-            if (config.restore_sticky && state.sticky !== undefined && state.sticky !== window.on_all_workspaces) {
-                state.sticky ? window.stick() : window.unstick();
-            }
-
-            // Restore Always on Top (Above)
-            if (config.restore_above && state.above !== undefined && state.above !== window.above) {
-                state.above ? window.make_above() : window.unmake_above();
-            }
-
-            // Restore Minimized
-            if (config.restore_minimized && state.minimized !== undefined && state.minimized !== window.minimized) {
-                state.minimized ? window.minimize() : window.unminimize();
-            }
-
-            // Apply Maximized State
-            if (config.restore_maximized && state.maximized) {
-                this._maximizeWindow(window);
+            this._finishRestore(window);
+            if (handle.pendingRestore) {
+                // This is a cancellation deadline, not a delay on successful restores.
+                handle.restoreTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+                    handle.restoreTimeoutId = 0;
+                    this._cancelRestore(handle);
+                    console.warn('[DejaWindow] Target monitor did not settle; automatic saving remains paused for this window.');
+                    return GLib.SOURCE_REMOVE;
+                });
             }
 
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _cancelRestore(handle: WindowHandle) {
+        for (const key of ['restoreIdleId', 'restoreTimeoutId'] as const) {
+            if (handle[key]) {
+                GLib.source_remove(handle[key]);
+                handle[key] = 0;
+            }
+        }
+        handle.pendingRestore = null;
+    }
+
+    _queueRestoreCompletion(window: Meta.Window) {
+        const handle = this._handles.get(window);
+        if (!handle?.pendingRestore || handle.restoreIdleId) return;
+        // Position changes can precede Mutter's monitor update in the same signal dispatch.
+        handle.restoreIdleId = GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            handle.restoreIdleId = 0;
+            this._finishRestore(window);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _finishRestore(window: Meta.Window) {
+        const handle = this._handles.get(window);
+        const pending = handle?.pendingRestore;
+        if (!handle || !pending) return;
+        if (this._releaseIfIneligible(window)) return;
+        const effective = this._getEffectiveConfig(window);
+        if (!this._functionalityEnabled || !window.get_workspace() ||
+            pending.layoutKey !== this._layoutKey() || effective?.identity !== pending.identity ||
+            effective.config !== pending.config) {
+            this._cancelRestore(handle);
+            return;
+        }
+        if (window.get_monitor() !== pending.monitor) return;
+
+        this._cancelRestore(handle);
+        const {state, config} = pending;
+        // A secondary-monitor window cannot change workspace until Mutter has moved it
+        // onto a participating monitor and cleared its derived sticky state.
+        const workspace = config.restore_workspace && this._monitorHasWorkspaces(pending.monitor) &&
+            state.workspace !== undefined && state.workspace >= 0 ?
+            global.workspace_manager.get_workspace_by_index(state.workspace) : null;
+        if (workspace && workspace !== window.get_workspace()) {
+            window.change_workspace(workspace);
+        }
+
+        // Workspace changes can discard a pending Wayland configure. Finish geometry
+        // on the destination workspace, avoiding another request when it already matches.
+        const geometry = pending.geometry;
+        if (geometry) {
+            const rect = window.get_frame_rect();
+            if (rect.x !== geometry.x || rect.y !== geometry.y ||
+                rect.width !== geometry.width || rect.height !== geometry.height) {
+                window.move_resize_frame(false, geometry.x, geometry.y, geometry.width, geometry.height);
+            }
+        }
+
+        // Restore Always on Visible Workspace (Sticky)
+        // Each of the three toggles below is applied only when it actually differs from the
+        // window's current state: these Meta calls are not free no-ops. In particular
+        // make_above()/unmake_above() raise the window to the top of the stack, so calling
+        // unmake_above() on a window that is already not above still brings it to the front.
+        if (config.restore_sticky && state.sticky !== undefined && state.sticky !== window.on_all_workspaces) {
+            state.sticky ? window.stick() : window.unstick();
+        }
+
+        // Restore Always on Top (Above)
+        if (config.restore_above && state.above !== undefined && state.above !== window.above) {
+            state.above ? window.make_above() : window.unmake_above();
+        }
+
+        // Restore Minimized
+        if (config.restore_minimized && state.minimized !== undefined && state.minimized !== window.minimized) {
+            state.minimized ? window.minimize() : window.unminimize();
+        }
+
+        // Apply Maximized State
+        if (config.restore_maximized && state.maximized) {
+            this._maximizeWindow(window);
+        }
+
+        handle.isRestoreApplied = true;
+        if (workspace && config.switch_to_workspace && window.get_workspace() === workspace &&
+            workspace !== global.workspace_manager.get_active_workspace()) {
+            workspace.activate(global.get_current_time());
+        }
     }
 
     // Saves the current window geometry to GSettings for persistence across sessions.
