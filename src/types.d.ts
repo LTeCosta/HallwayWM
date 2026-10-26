@@ -50,11 +50,18 @@ export interface ApplicationState extends LayoutState {
     layouts?: Record<string, LayoutState>;
 }
 export type ApplicationStates = Record<string, ApplicationState>;
+export interface WindowGeometry {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
 export interface PendingRestore {
     identity: string;
     layoutKey: string;
     monitor: number;
-    geometry: {x: number; y: number; width: number; height: number} | null;
+    geometry: WindowGeometry | null;
+    monitorFrame: WindowGeometry;
     config: RestoreFlags;
     state: LayoutState;
 }

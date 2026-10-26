@@ -955,7 +955,8 @@ export default class DejaWindowExtension extends Extension {
             const monitorIndex = config.restore_pos && targetMonitor >= 0 &&
                 targetMonitor < global.display.get_n_monitors() ? targetMonitor : window.get_monitor();
             const pending: PendingRestore = {
-                identity, layoutKey: this._layoutKey(), monitor: monitorIndex, geometry: null, config, state
+                identity, layoutKey: this._layoutKey(), monitor: monitorIndex, geometry: null,
+                monitorFrame: rect, config, state
             };
             handle.pendingRestore = pending;
             if (monitorIndex !== window.get_monitor()) {
@@ -1064,7 +1065,22 @@ export default class DejaWindowExtension extends Extension {
             this._cancelRestore(handle);
             return;
         }
-        if (window.get_monitor() !== pending.monitor) return;
+        if (window.get_monitor() !== pending.monitor) {
+            const rect = window.get_frame_rect();
+            const previous = pending.monitorFrame;
+            // An earlier Wayland configure, particularly unmaximize, can land on the
+            // old monitor after our move. Retry only when the observed frame changes.
+            if (rect.x !== previous.x || rect.y !== previous.y ||
+                rect.width !== previous.width || rect.height !== previous.height) {
+                pending.monitorFrame = rect;
+                window.move_to_monitor(pending.monitor);
+                const geometry = pending.geometry;
+                if (geometry) {
+                    window.move_resize_frame(false, geometry.x, geometry.y, geometry.width, geometry.height);
+                }
+            }
+            return;
+        }
 
         this._cancelRestore(handle);
         const {state, config} = pending;
