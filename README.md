@@ -32,14 +32,16 @@ From this checkout:
 npm ci --ignore-scripts --workspaces=false
 npm run check
 bash scripts/install.sh
-gnome-extensions enable hallwaywm@workstation.local
 ```
 
-Sign out and back in to discover a new local extension or load changed JavaScript. The installer preserves private settings and copies generated JavaScript and assets as regular files. Open preferences with:
+The installer preserves private settings and copies generated JavaScript and assets as regular files. After the first installation, sign out and back in so GNOME discovers the extension, then enable it and open preferences:
 
 ```sh
+gnome-extensions enable hallwaywm@workstation.local
 gnome-extensions prefs hallwaywm@workstation.local
 ```
+
+Sign out and back in after subsequent updates to load changed JavaScript.
 
 `bash scripts/pack.sh` builds `temp/hallwaywm.zip`. Generated `dist/`, `node_modules/` and release archives stay outside Git. TypeScript is the maintained source.
 
