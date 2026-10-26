@@ -27,6 +27,8 @@ Rules and captured application profiles remain private in the user's dconf datab
 
 Open **Display Profiles** in preferences. The connected screens select their profile automatically. Give it a name, arrange applications and use **Save Positions**, or save an individual application from its rule. Saving in a notebook-only setup keeps its positions separate from a docked setup. Saved main-window positions are applied when that setup returns; the active workspace stays unchanged during profile switches.
 
+**Save Positions** preserves each application's current lock setting. **Save & Lock** also stops automatic position learning for the applications successfully saved. Apps using Global Defaults receive individual rules with the same restore options; existing active rules keep their matching and restore settings. Locks apply to those applications across all display profiles, while saved positions remain separate per setup. Move windows freely during use, then use **Restore** or reopen an application to restore its saved position. Unlock an application's rule on the **Applications** page to resume learning. Explicit saves remain available while a rule is locked; apps excluded from defaults without an active individual rule and secondary windows are not included in either bulk action.
+
 A new setup starts with the desktop's current placement. Under **Reuse a Saved Layout**, select another profile and choose:
 
 - **Independent copy**: copy its saved positions, then edit the destination separately.

@@ -1,6 +1,6 @@
 # HallwayWM workstation build
 
-This branch maintains HallwayWM `0.2.0`, derived from Deja Window upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
+This branch maintains HallwayWM `0.2.1`, derived from Deja Window upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
 
 The build manages persistent application placement and live window layouts in one GNOME extension. It selects the first normal window per application for persistent rules, saves separate monitor-layout profiles, restores half-screen geometry correctly, and keeps rule editing available in normal window menus. It uses `hallwaywm@workstation.local` so catalog updates do not replace the custom build. Application identities, titles, rules and captured geometry stay in the user's private dconf database.
 
@@ -24,6 +24,8 @@ Native Mutter monitor getters provide device identities. Logical screen position
 
 Independent copies adapt geometry through explicit source-to-destination screen mappings. Linked profiles resolve source positions on use, including linked chains, and reject cycles. Saving into a linked profile is disabled. Detaching makes an independent copy of its currently resolved positions. Profile copying and link operations apply to main-window placement; unrelated display profiles remain intact. Application matching rules and restore flags apply across profiles.
 
+**Save Positions** captures managed main windows without changing their rules. **Save & Lock** captures the same eligible windows, then locks only successfully saved applications. Existing enabled rules retain their matching and restore flags. Default-managed apps receive exact-class rules with their current default restore flags; an existing disabled exact-class slot is reused. Global Defaults, exclusions, unrelated rules and other profiles' saved positions remain unchanged. Locks apply per application across profiles, and explicit captures continue to work while locked. Unlock the rule in **Applications** to resume automatic learning. Deferred saves recheck the effective rule before writing, so a pending automatic capture respects a newly applied lock. Both actions reject linked profiles and monitor transitions.
+
 The first connected setup can adopt a matching geometry-only record. Unidentified saved layouts remain available as templates and are not automatically assigned to new physical devices. A new setup without saved positions keeps the desktop's current arrangement until positions are learned or explicitly saved.
 
 ## Build, installation and validation
@@ -40,7 +42,7 @@ Run `bash -n scripts/install.sh scripts/pack.sh` and `glib-compile-schemas --str
 GI_TYPELIB_PATH=/usr/lib/gnome-shell/girepository-1.0 LD_LIBRARY_PATH=/usr/lib/gnome-shell GSETTINGS_BACKEND=memory gjs -m tests/preferences.mjs
 ```
 
-The workstation repository's `tests/gnome_window_state_manager_integration.py` builds the pinned sources, verifies every payload hash and exercises the unified extension alone in an isolated GNOME session. The base workload covers seven Wayland/XWayland windows, repeated KVM transitions, primary-monitor changes, lock-mode monitor changes and immediate capture on enable. Its `--placement`, `--half-screen`, `--main-window`, `--workspaces` and `--profiles` cases cover persistence, monitor transitions and window eligibility. The profile workload covers separate notebook/docked records, saved-profile priority, equal geometry with another simulated device identity, copy/link/detach actions and proportional monitor mapping. `npm run test:profiles` tests identity, geometry and linked-template semantics without a Shell. Physical monitor/KVM acceptance remains a separate check.
+The workstation repository's `tests/gnome_window_state_manager_integration.py` builds the pinned sources, verifies every payload hash and exercises the unified extension alone in an isolated GNOME session. The base workload covers seven Wayland/XWayland windows, repeated KVM transitions, primary-monitor changes, lock-mode monitor changes and immediate capture on enable. Its `--placement`, `--half-screen`, `--main-window`, `--workspaces` and `--profiles` cases cover persistence, monitor transitions and window eligibility. The profile workload covers Save & Lock with explicit and default-managed apps, queued-save cancellation, manual resaving, reopen restoration, unlock learning, exclusion preservation, separate notebook/docked records, saved-profile priority, equal geometry with another simulated device identity, copy/link/detach actions and proportional monitor mapping. `npm run test:profiles` tests identity, geometry and linked-template semantics without a Shell. Physical monitor/KVM acceptance remains a separate check.
 
 JavaScript syntax is checked with the installed GJS parser (`Reflect.parse` with `target: "module"`); the isolated integration suite validates the Shell imports and behavior.
 

@@ -120,13 +120,21 @@ export class DisplayProfilesPage {
         current.add(status);
         const actions = new Adw.ActionRow({title: 'Application Positions',
             subtitle: 'Save the main windows of managed applications, or restore this profile now.'});
-        const save = new Gtk.Button({label: 'Save Positions', valign: Gtk.Align.CENTER, sensitive: !active.link});
+        const save = new Gtk.Button({label: 'Save Positions', valign: Gtk.Align.CENTER, sensitive: !active.link,
+            tooltip_text: 'Save current positions without changing application locks.'});
         save.connect('clicked', () => this.send({action: 'save', target: activeKey}));
         const apply = new Gtk.Button({label: 'Restore', valign: Gtk.Align.CENTER});
         apply.connect('clicked', () => this.send({action: 'apply', target: activeKey}));
         actions.add_suffix(save);
         actions.add_suffix(apply);
         current.add(actions);
+        const fixed = new Adw.ActionRow({title: 'Fixed Application Positions',
+            subtitle: 'Moving windows will not update their saved positions. Locks apply to these apps across all display profiles.'});
+        const saveAndLock = new Gtk.Button({label: 'Save & Lock', valign: Gtk.Align.CENTER, sensitive: !active.link,
+            tooltip_text: 'Save current positions and lock each application rule. Apps using Global Defaults get individual rules with the same options. Unlock on the Applications page.'});
+        saveAndLock.connect('clicked', () => this.send({action: 'save-and-lock', target: activeKey}));
+        fixed.add_suffix(saveAndLock);
+        current.add(fixed);
 
         // Geometry-only records already adopted by a device profile need no duplicate row.
         const visible = Object.entries(catalog).filter(([key, profile]) =>

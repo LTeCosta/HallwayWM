@@ -173,11 +173,13 @@ export class DisplayProfiles {
                     delete target.legacyKey;
                     this.writeCatalog();
                     message = 'Profile is independent. Its current saved layout is preserved.';
-                } else if (request.action === 'save') {
+                } else if (request.action === 'save' || request.action === 'save-and-lock') {
                     if (!this.canSave()) throw new Error('Make this profile independent before saving local positions.');
                     if (!this.extension._functionalityEnabled) throw new Error('Enable HallwayWM before saving window positions.');
-                    const count = this.extension._saveCurrentProfile();
-                    message = `Saved positions for ${count} application${count === 1 ? '' : 's'}.`;
+                    const lockPositions = request.action === 'save-and-lock';
+                    const count = this.extension._saveCurrentProfile(lockPositions);
+                    message = count === 0 ? 'No managed application positions were saved.' :
+                        `Saved${lockPositions ? ' and locked' : ''} positions for ${count} application${count === 1 ? '' : 's'}.`;
                 } else if (request.action === 'apply') {
                     if (!this.extension._functionalityEnabled) throw new Error('Enable HallwayWM before restoring window positions.');
                     const count = this.extension._restoreCurrentProfile();

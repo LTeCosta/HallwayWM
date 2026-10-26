@@ -11,6 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { HallwayWMMenu } from './windowMenu.js';
 import { SessionLayouts } from './sessionLayouts.js';
 import { DisplayProfiles } from './profileManager.js';
+import { RESTORE_OPTIONS } from './restoreOptions.js';
 import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, PendingRestore, RestoreFlags, WindowHandle, WindowRule} from './types.js';
 
 const DEBUG = false;
@@ -496,12 +497,40 @@ export default class HallwayWMExtension extends Extension {
         return this._restoreSavedProfiles().size;
     }
 
-    _saveCurrentProfile() {
+    _saveCurrentProfile(lockPositions = false) {
         let count = 0;
+        const configs = this._configs.map(config => ({...config}));
+        let configsChanged = false;
         for (const window of this._handles.keys()) {
             const effective = this._getEffectiveConfig(window);
-            if (effective && this.captureWindowState(window, effective.identity)) count++;
+            if (!effective || !this.captureWindowState(window, effective.identity)) continue;
+            count++;
+            if (!lockPositions) continue;
+
+            const explicitIndex = this._configs.findIndex(config => config === effective.config);
+            if (explicitIndex >= 0) {
+                if (!configs[explicitIndex].locked) {
+                    configs[explicitIndex].locked = true;
+                    configsChanged = true;
+                }
+                continue;
+            }
+
+            // Default-managed apps need individual rules to freeze learning while
+            // preserving their restore options and the defaults for other apps.
+            const rule: WindowRule = {
+                wm_class: effective.identity, match_mode: 'wm_class', is_regex: false,
+                enabled: true, locked: true
+            };
+            for (const {key} of RESTORE_OPTIONS) rule[key] = !!effective.config[key];
+            const existingIndex = configs.findIndex(config => config.wm_class === rule.wm_class &&
+                (config.match_mode ?? 'wm_class') === 'wm_class' && !config.is_regex);
+            if (existingIndex >= 0) configs[existingIndex] = rule;
+            else configs.push(rule);
+            configsChanged = true;
         }
+        if (configsChanged && !this._settings!.set_string('window-app-configs', JSON.stringify(configs)))
+            throw new Error('Positions were saved, but application rules could not be locked.');
         return count;
     }
 
@@ -928,7 +957,11 @@ export default class HallwayWMExtension extends Extension {
 
             // Schedule a timeout to save the window's state
             handle.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-                if (this._releaseIfIneligible(window)) return GLib.SOURCE_REMOVE;
+                handle.timeoutId = 0;
+                if (!this._functionalityEnabled || this._releaseIfIneligible(window)) return GLib.SOURCE_REMOVE;
+                // A manual save can lock or replace the rule while this save waits.
+                const current = this._getEffectiveConfig(window);
+                if (!current || current.config.locked === true) return GLib.SOURCE_REMOVE;
                 debug('[HallwayWM] Window changed (debounced):', identity);
                 // Capture geometry and flags together after Wayland has settled.
                 const rect = window.get_frame_rect();
@@ -939,10 +972,9 @@ export default class HallwayWMExtension extends Extension {
                 const workspaceIndex = workspace ? workspace.index() : -1;
                 const monitorIndex = window.get_monitor();
 
-                this._performSave(effective.identity, monitorIndex, rect.x, rect.y, rect.width, rect.height,
-                    effective.config, isMaximized, workspaceIndex, window.minimized, window.above, window.on_all_workspaces);
+                this._performSave(current.identity, monitorIndex, rect.x, rect.y, rect.width, rect.height,
+                    current.config, isMaximized, workspaceIndex, window.minimized, window.above, window.on_all_workspaces);
 
-                handle.timeoutId = 0;
                 return GLib.SOURCE_REMOVE;
             });
         };

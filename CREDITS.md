@@ -8,7 +8,7 @@ HallwayWM brings together the application-placement and monitor-layout behavior 
 
 ## Window State Manager
 
-[Window State Manager](https://github.com/kishorviswanathan/window-state-manager), by Kishor Viswanathan and contributors, supplies the monitor/KVM layout-restoration concept consolidated here. The [workstation fork](https://github.com/LTeCosta/window-state-manager) established the required behavior for already-open windows, immediate capture and repeated monitor transitions. HallwayWM implements this responsibility in a new TypeScript session-layout module coordinated with its shared placement engine.
+[Window State Manager](https://github.com/kishorviswanathan/window-state-manager), by Kishor Viswanathan and contributors, supplies the monitor/KVM layout-restoration concept consolidated here. Its monitor-restoration workflow informs the handling of already-open windows, immediate capture and repeated monitor transitions. HallwayWM implements this responsibility in a new TypeScript session-layout module coordinated with its shared placement engine.
 
 ## HallwayWM
 

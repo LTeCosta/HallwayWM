@@ -1,6 +1,7 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Gtk from 'gi://Gtk';
 
 if (GLib.getenv('GSETTINGS_BACKEND') !== 'memory')
     throw new Error('Run with GSETTINGS_BACKEND=memory to isolate test preferences');
@@ -43,5 +44,33 @@ for (const title of ['Applications', 'Global Defaults', 'Display Profiles', 'Set
     if (!pages.includes(title)) throw new Error('Missing preferences page: '+title);
 if (preserved.some((key, index) => settings.get_string(key) !== before[index]))
     throw new Error('Constructing preferences changed the fixture rules or profiles');
+function button(label) {
+    const found = [];
+    function visit(widget) {
+        if (widget instanceof Gtk.Button && widget.label === label) found.push(widget);
+        for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
+    }
+    visit(window);
+    if (found.length !== 1) throw new Error('Expected one button: ' + label);
+    return found[0];
+}
+for (const [label, action] of [['Save Positions', 'save'], ['Save & Lock', 'save-and-lock']]) {
+    if (!button(label).sensitive) throw new Error('Independent profile cannot save: ' + label);
+    button(label).emit('clicked');
+    const request = JSON.parse(settings.get_string('profile-request'));
+    if (request.action !== action || request.target !== 'home' || !request.id)
+        throw new Error('Incorrect profile action: ' + JSON.stringify(request));
+    settings.set_string('profile-request', JSON.stringify({id: request.id, status: 'ok', message: 'Test saved.'}));
+}
+if (preserved.some((key, index) => settings.get_string(key) !== before[index]))
+    throw new Error('Profile controls changed rules before a runtime response');
+const catalog = JSON.parse(settings.get_string('display-profiles'));
+catalog.home.link = {source: 'office', mapping: {'office-screen': 'home-screen'}};
+settings.set_string('display-profiles', JSON.stringify(catalog));
+const context = GLib.MainContext.default();
+while (context.pending()) context.iteration(false);
+for (const label of ['Save Positions', 'Save & Lock'])
+    if (button(label).sensitive) throw new Error('Linked profile permits local saves: ' + label);
+if (!button('Restore').sensitive) throw new Error('Linked profile cannot restore');
 window.close();
-print('Preferences smoke test passed: all four pages, display profile controls, typed rule forms and unchanged fixture rules');
+print('Preferences smoke test passed: four pages, both save requests, linked-profile guards and unchanged rules');

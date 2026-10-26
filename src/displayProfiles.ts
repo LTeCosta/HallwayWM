@@ -20,7 +20,7 @@ export interface DisplayProfile {
 export type ProfileCatalog = Record<string, DisplayProfile>;
 export interface ProfileRequest {
     id: string;
-    action: 'rename' | 'copy' | 'link' | 'unlink' | 'save' | 'apply';
+    action: 'rename' | 'copy' | 'link' | 'unlink' | 'save' | 'save-and-lock' | 'apply';
     target: string;
     source?: string;
     name?: string;
