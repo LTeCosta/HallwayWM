@@ -21,6 +21,14 @@ settings.set_string('window-app-configs', JSON.stringify([
 ]));
 settings.set_string('window-global-defaults', JSON.stringify({enabled: true, restore_pos: true,
     excluded_apps: [{wm_class: 'org.workstation.Excluded', match_mode: 'wm_class'}]}));
+const screen = (id, name, primary) => ({id, name, primary, builtin: false, index: 0,
+    scale: 1, geometry: {x: 0, y: 0, width: 1920, height: 1080},
+    workArea: {x: 0, y: 32, width: 1920, height: 1048}});
+settings.set_string('display-profiles', JSON.stringify({
+    home: {name: 'Home', monitors: [screen('home-screen', 'Home screen', true)]},
+    office: {name: 'Office', monitors: [screen('office-screen', 'Office screen', true)]}
+}));
+settings.set_string('active-display-profile', 'home');
 const before = settings.get_string('window-app-configs');
 const window = new Adw.PreferencesWindow();
 await preferences.fillPreferencesWindow(window);
@@ -30,9 +38,9 @@ function inspect(widget) {
     for (let child=widget.get_first_child(); child; child=child.get_next_sibling()) inspect(child);
 }
 inspect(window);
-for (const title of ['Applications', 'Global Defaults', 'Settings'])
+for (const title of ['Applications', 'Global Defaults', 'Display Profiles', 'Settings'])
     if (!pages.includes(title)) throw new Error('Missing preferences page: '+title);
 if (settings.get_string('window-app-configs') !== before)
     throw new Error('Constructing preferences changed the fixture rules');
 window.close();
-print('Preferences smoke test passed: all three pages, typed rule forms and unchanged fixture rules');
+print('Preferences smoke test passed: all four pages, display profile controls, typed rule forms and unchanged fixture rules');

@@ -1,5 +1,6 @@
 import type {ApplicationStates, CaptureRequest, GlobalDefaults, MatchMode, MatchRule, RestoreFlags, RestoreKey, RestoreOption, WindowRule} from './types.js';
 import Adw from 'gi://Adw';
+import { DisplayProfilesPage } from './profilePreferences.js';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
@@ -21,26 +22,26 @@ interface ConfigurationBackup {
 // greyed out while its parent is off, and left out of the section's summary so
 // that stays a list of what actually gets restored.
 const RESTORE_OPTIONS: RestoreOption[] = [
-    { key: 'restore_size', label: 'Size' },
-    { key: 'restore_pos', label: 'Position' },
+    { key: 'restore_size', label: 'Size', subtitle: 'Restore the saved width and height for the active display profile.' },
+    { key: 'restore_pos', label: 'Position', subtitle: 'Use the saved screen and position instead of default centering.' },
     {
         key: 'avoid_overlap',
-        label: 'Avoid Overlap for Additional Windows',
-        subtitle: 'Offset this window when another one of the same app already sits at the restored position',
+        label: 'Avoid Same-App Overlap',
+        subtitle: 'Allow the restored main window to shift when another window of the same app occupies that position.',
         dependsOn: 'restore_pos',
         defaultOn: true,
     },
-    { key: 'restore_maximized', label: 'Maximized' },
-    { key: 'restore_workspace', label: 'Workspace' },
+    { key: 'restore_maximized', label: 'Maximized State', subtitle: 'Restore whether the window was maximized or in its normal size.' },
+    { key: 'restore_workspace', label: 'Workspace', subtitle: 'Move to the saved workspace when the destination screen supports workspaces.' },
     {
         key: 'switch_to_workspace',
         label: 'Switch to Workspace',
-        subtitle: 'Activate the workspace where the window is restored',
+        subtitle: 'Also take you to that workspace when the application opens. Display-profile changes keep your current workspace.',
         dependsOn: 'restore_workspace',
     },
-    { key: 'restore_minimized', label: 'Minimized' },
-    { key: 'restore_above', label: 'Always on Top' },
-    { key: 'restore_sticky', label: 'On All Workspaces' },
+    { key: 'restore_minimized', label: 'Minimized State', subtitle: 'Restore whether the window was minimized; a saved minimized window can open hidden.' },
+    { key: 'restore_above', label: 'Always on Top', subtitle: 'Restore whether the window was pinned above other windows.' },
+    { key: 'restore_sticky', label: 'Visible on All Workspaces', subtitle: 'Restore whether the window was pinned to appear on every workspace.' },
 ];
 
 // Keeps the collapsed "Restore" row informative: what this rule actually
@@ -51,8 +52,8 @@ function restoreSummary(values: RestoreFlags) {
     const primary = RESTORE_OPTIONS.filter(option => !option.dependsOn);
     const active = primary.filter(option => !!values[option.key]);
 
-    if (active.length === 0) return 'Nothing — the window is tracked but never restored';
-    if (active.length === primary.length) return 'Everything';
+    if (active.length === 0) return 'Default window placement; no saved states restored';
+    if (active.length === primary.length) return 'All saved states';
 
     const text = active.map(option => option.label).join(', ');
     return text.length > MAX_RESTORE_SUMMARY
@@ -136,6 +137,7 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
             icon_name: 'globe-symbolic'
         }); // custom icon, see src/icons/globe-symbolic.svg and the search path added above
         window.add(defaultsPage);
+        window.add(new DisplayProfilesPage(settings, window).page);
 
         // General extension settings (currently just the top bar indicator),
         // kept separate from Global Defaults since it's about the extension
@@ -834,6 +836,10 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
             cancelCaptureTimeout();
             settings.set_string('capture-state-request', '');
 
+            if (reply.status === 'profile-linked') {
+                showToast('Make the active display profile independent before saving local positions.');
+                return;
+            }
             if (reply.status === 'save-failed') {
                 showToast(`Could not save the current window state for “${reply.wm_class}”. Try again after the display layout settles.`);
                 return;
@@ -1194,13 +1200,13 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
 
         const globalDefaultsGroup = new Adw.PreferencesGroup({
             title: 'Global Defaults',
-            description: 'Applied automatically to the main window of each application with no individual rule. Individual rules take priority.'
+            description: 'Defaults apply to main windows without an individual rule. Each enabled option restores its saved value for the active display profile; it does not force that state on every window.'
         });
         defaultsPage.add(globalDefaultsGroup);
 
         const excludeGroup = new Adw.PreferencesGroup({
             title: 'Excluded Apps',
-            description: 'These apps are never managed by Global Defaults, even when enabled.'
+            description: 'These apps skip automatic application defaults. Open-window KVM layouts remain available.'
         });
         defaultsPage.add(excludeGroup);
 
@@ -1259,7 +1265,7 @@ export default class HallwayWMPreferences extends ExtensionPreferences {
             // user has already tested via an explicit per-app rule.
             const enabledRow = new Adw.ActionRow({
                 title: 'Enabled',
-                subtitle: 'Manage each application’s main window without an individual rule (experimental)'
+                subtitle: 'Apply these defaults to main windows without a matching individual rule. This is separate from HallwayWM’s Active switch.'
             });
             const enabledSwitch = new Gtk.Switch({ active: defaults.enabled, valign: Gtk.Align.CENTER });
             let suppressToggle = false;

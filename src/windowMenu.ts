@@ -515,6 +515,10 @@ export class HallwayWMMenu {
         const { activeConfig } = this._readState(wmClass, title);
         if (!activeConfig) return;
 
+        if (this._extension._profiles?.isLinked()) {
+            this._showOsd('dialog-error-symbolic', 'Make this display profile independent before saving');
+            return;
+        }
         const saved = this._extension.captureWindowState(window, activeConfig.wm_class);
         this._showOsd(saved ? 'document-save-symbolic' : 'dialog-error-symbolic',
             saved ? 'Window state saved' : 'Could not save window state');

@@ -89,5 +89,20 @@
       <description>JSON object of restore_* flags applied to any NORMAL window without its own per-app config, plus an excluded_apps list of rules like {"wm_class": pattern, "match_mode": "wm_class"|"title", "is_regex": bool}.</description>
     </key>
 
+    <key name="display-profiles" type="s">
+      <default>'{}'</default>
+      <summary>Display profiles</summary>
+      <description>Private device identities, screen arrangements, names and linked layout templates.</description>
+    </key>
+    <key name="active-display-profile" type="s">
+      <default>''</default>
+      <summary>Currently connected display profile</summary>
+      <description>The profile selected automatically by the connected devices and their arrangement.</description>
+    </key>
+    <key name="profile-request" type="s">
+      <default>''</default>
+      <summary>Profile action request</summary>
+      <description>Requests and acknowledgements between native preferences and the running extension.</description>
+    </key>
   </schema>
 </schemalist>

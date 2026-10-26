@@ -1,6 +1,5 @@
 import GLib from 'gi://GLib';
 import type Meta from 'gi://Meta';
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import type HallwayWMExtension from './extension.js';
 import type {LayoutState} from './types.js';
 
@@ -18,7 +17,7 @@ export class SessionLayouts {
     }
 
     key() {
-        return JSON.stringify([this.extension._layoutKey(), Main.layoutManager.primaryIndex]);
+        return this.extension._layoutKey();
     }
 
     track(window: Meta.Window | null) {
@@ -82,19 +81,19 @@ export class SessionLayouts {
             const rect = window.get_frame_rect();
             states.set(window, {
                 x: rect.x, y: rect.y, width: rect.width, height: rect.height,
-                monitor: window.get_monitor(), workspace: window.get_workspace().index(),
+                monitor: window.get_monitor(), monitorId: this.extension._profiles?.monitorId(window.get_monitor()), workspace: window.get_workspace().index(),
                 maximized: window.is_maximized(), minimized: window.minimized,
                 fullscreen: window.fullscreen, above: window.above, sticky: window.on_all_workspaces
             });
         }
     }
 
-    restore() {
+    restore(excluded = new Set<Meta.Window>()) {
         const restored = new Set<Meta.Window>();
         const states = this.layouts.get(this.key());
         if (!states) return restored;
         for (const [window, state] of states) {
-            if (!this.windows.has(window) || !this.extension._isMainWindowCandidate(window) ||
+            if (excluded.has(window) || !this.windows.has(window) || !this.extension._isMainWindowCandidate(window) ||
                 !window.get_workspace()) continue;
             this.extension._restoreSessionWindow(window, state);
             restored.add(window);

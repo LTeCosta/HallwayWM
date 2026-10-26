@@ -10,6 +10,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { HallwayWMMenu } from './windowMenu.js';
 import { SessionLayouts } from './sessionLayouts.js';
+import { DisplayProfiles } from './profileManager.js';
 import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, PendingRestore, RestoreFlags, WindowHandle, WindowRule} from './types.js';
 
 const DEBUG = false;
@@ -77,6 +78,7 @@ export default class HallwayWMExtension extends Extension {
     declare _sessionLocked: boolean;
     declare _layoutRestorePending: boolean;
     declare _sessionLayouts: SessionLayouts | null;
+    declare _profiles: DisplayProfiles | null;
     declare _sessionHandles: Map<Meta.Window, WindowHandle>;
     declare _adoptIdleId: number;
     declare _adoptWithoutRestore: boolean;
@@ -91,6 +93,7 @@ export default class HallwayWMExtension extends Extension {
         this._handles = new Map();
         this._sessionHandles = new Map();
         this._sessionLayouts = null;
+        this._profiles = null;
         this._sessionLocked = Main.sessionMode.currentMode === 'unlock-dialog';
         this._layoutRestorePending = false;
 
@@ -176,6 +179,7 @@ export default class HallwayWMExtension extends Extension {
 
         // Existing windows retain their placement when the extension is enabled.
         // New windows still receive the persistent application rules.
+        this._profiles = new DisplayProfiles(this);
         this._sessionLayouts = new SessionLayouts(this);
         Main.sessionMode.connectObject('updated', () => this._onSessionModeChanged(), this);
 
@@ -193,6 +197,7 @@ export default class HallwayWMExtension extends Extension {
         });
 
         Main.layoutManager.connectObject('monitors-changed', () => {
+            this._profiles?.sync();
             this._layoutRestorePending = true;
             this._sessionLayouts?.topologyChanged();
             this._scheduleLayoutRestore();
@@ -207,6 +212,8 @@ export default class HallwayWMExtension extends Extension {
     }
 
     disable() {
+        this._profiles?.destroy();
+        this._profiles = null;
         this._sessionLayouts?.destroy();
         this._sessionLayouts = null;
         this._cancelAllRestores();
@@ -407,10 +414,9 @@ export default class HallwayWMExtension extends Extension {
         }
     }
 
-    // Logical rectangles distinguish the docked and notebook-only KVM layouts.
+    // A profile follows physical devices, logical geometry and the primary display.
     _layoutKey() {
-        return JSON.stringify(Main.layoutManager.monitors.map(monitor =>
-            [monitor.x, monitor.y, monitor.width, monitor.height]));
+        return this._profiles?.key() ?? 'display-transition';
     }
 
     _cancelAllRestores() {
@@ -452,28 +458,51 @@ export default class HallwayWMExtension extends Extension {
         });
     }
 
-    // Live snapshots take precedence for the same open window. An application
-    // profile fills only a layout that this window has never visited.
+    // Persistent profiles own main-window placement. Live snapshots restore
+    // additional windows and applications without saved positions in this setup.
     _restoreNewLayouts() {
         if (!this._functionalityEnabled || this._sessionLocked || !this._settings) return;
+        this._profiles?.sync();
         this._layoutRestorePending = false;
-        const restored = this._sessionLayouts?.restore() ?? new Set<Meta.Window>();
-        const layoutKey = this._layoutKey();
+        const restored = this._restoreSavedProfiles();
+        this._sessionLayouts?.restore(restored);
+        this._sessionLayouts?.scheduleSave();
+    }
+
+    _restoreSavedProfiles() {
+        const restored = new Set<Meta.Window>();
+        if (!this._settings || !this._functionalityEnabled || this._sessionLocked) return restored;
         let states: ApplicationStates = {};
         try {
             states = JSON.parse(this._settings.get_string('window-app-states')) || {};
-        } catch (e) {
-            console.error('[HallwayWM] Error reading layout profiles:', e);
+        } catch {
+            return restored;
         }
         for (const [window, handle] of this._handles) {
-            if (restored.has(window) || handle.visitedLayouts.has(layoutKey)) continue;
-            handle.visitedLayouts.add(layoutKey);
             const effective = this._getEffectiveConfig(window);
-            if (!effective || !states[effective.identity]?.layouts?.[layoutKey]) continue;
+            if (!effective || !this._profiles?.getState(states, effective.identity)) continue;
+            this._cancelRestore(handle);
             handle.isRestoreApplied = false;
-            this._applySavedState(window, effective.identity, effective.config);
+            handle.visitedLayouts.add(this._layoutKey());
+            this._applySavedState(window, effective.identity, effective.config, undefined, false);
+            restored.add(window);
         }
-        this._sessionLayouts?.scheduleSave();
+        return restored;
+    }
+
+    _restoreCurrentProfile() {
+        if (!this._functionalityEnabled || this._sessionLocked) return 0;
+        this._layoutSaveAfter = GLib.get_monotonic_time() + 2 * 1000 * 1000;
+        return this._restoreSavedProfiles().size;
+    }
+
+    _saveCurrentProfile() {
+        let count = 0;
+        for (const window of this._handles.keys()) {
+            const effective = this._getEffectiveConfig(window);
+            if (effective && this.captureWindowState(window, effective.identity)) count++;
+        }
+        return count;
     }
 
     _getRestoreHandle(window: Meta.Window) {
@@ -498,7 +527,7 @@ export default class HallwayWMExtension extends Extension {
         this._cancelRestore(handle);
         handle.isRestoreApplied = false;
         handle.visitedLayouts.add(this._layoutKey());
-        this._applySavedState(window, '', SESSION_RESTORE_FLAGS, state);
+        this._applySavedState(window, '', SESSION_RESTORE_FLAGS, this._profiles?.remapMonitor(state) ?? state);
     }
 
     // Helper to find a matching config for a given Window
@@ -601,6 +630,10 @@ export default class HallwayWMExtension extends Extension {
 
         if (!window) {
             reply('no-window');
+            return;
+        }
+        if (this._profiles?.isLinked()) {
+            reply('profile-linked');
             return;
         }
         reply(this.captureWindowState(window, config.wm_class) ? 'saved' : 'save-failed');
@@ -958,7 +991,7 @@ export default class HallwayWMExtension extends Extension {
     }
 
     // Applies the saved size and/or position, or falls back to centering if position is invalid/not requested.
-    _applySavedState(window: Meta.Window, identity: string, config: RestoreFlags, sessionState?: LayoutState) {
+    _applySavedState(window: Meta.Window, identity: string, config: RestoreFlags, sessionState?: LayoutState, switchWorkspace = config.switch_to_workspace === true) {
         const handle = this._getRestoreHandle(window);
         // A restore already applied — or already scheduled, since several signals can
         // trigger one before the idle runs — needs no second source.
@@ -1012,7 +1045,7 @@ export default class HallwayWMExtension extends Extension {
             }
 
             // Get saved state for this window
-            const state = sessionState ?? savedStates[identity]?.layouts?.[this._layoutKey()] ?? {};
+            const state = sessionState ?? this._profiles?.getState(savedStates, identity) ?? {};
             debug('[HallwayWM] Restoring state for:', identity, state);
             const rect = window.get_frame_rect();
 
@@ -1032,7 +1065,7 @@ export default class HallwayWMExtension extends Extension {
                 targetMonitor < global.display.get_n_monitors() ? targetMonitor : window.get_monitor();
             const pending: PendingRestore = {
                 identity, layoutKey: this._layoutKey(), monitor: monitorIndex, geometry: null,
-                monitorFrame: rect, config, state, session: sessionState !== undefined
+                monitorFrame: rect, config, state, session: sessionState !== undefined, switchWorkspace
             };
             handle.pendingRestore = pending;
             if (monitorIndex !== window.get_monitor()) {
@@ -1215,7 +1248,7 @@ export default class HallwayWMExtension extends Extension {
         }
         handle.isRestoreApplied = true;
         this._sessionLayouts?.scheduleSave();
-        if (workspace && config.switch_to_workspace && window.get_workspace() === workspace &&
+        if (workspace && pending.switchWorkspace && window.get_workspace() === workspace &&
             workspace !== global.workspace_manager.get_active_workspace()) {
             workspace.activate(global.get_current_time());
         }
@@ -1223,7 +1256,8 @@ export default class HallwayWMExtension extends Extension {
 
     // Saves the current window geometry to GSettings for persistence across sessions.
     _performSave(identity: string, monitorIndex: number, x: number, y: number, w: number, h: number, config: RestoreFlags, isMaximized: boolean, workspaceIndex: number, minimized: boolean, above: boolean, sticky: boolean) {
-        if (!this._settings || this._sessionLocked || GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
+        if (!this._settings || this._sessionLocked || !this._profiles?.canSave() ||
+            GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
 
         debug(`[HallwayWM] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
 
@@ -1237,7 +1271,7 @@ export default class HallwayWMExtension extends Extension {
 
         const layoutKey = this._layoutKey();
         const layouts = savedStates[identity]?.layouts || {};
-        const layoutState = layouts[layoutKey] || {};
+        const layoutState = {...this._profiles.getState(savedStates, identity)};
 
         let changed = false;
 
@@ -1265,6 +1299,7 @@ export default class HallwayWMExtension extends Extension {
         // If we are restoring position and the monitor is different, then save the new monitor
         if (config.restore_pos && layoutState.monitor !== monitorIndex) {
             layoutState.monitor = monitorIndex;
+            layoutState.monitorId = this._profiles.monitorId(monitorIndex);
             changed = true;
         }
 

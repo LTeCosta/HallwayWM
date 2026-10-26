@@ -36,6 +36,7 @@ export interface RestoreOption {
 }
 export interface LayoutState {
     monitor?: number;
+    monitorId?: string;
     workspace?: number;
     x?: number;
     y?: number;
@@ -66,6 +67,7 @@ export interface PendingRestore {
     config: RestoreFlags;
     state: LayoutState;
     session: boolean;
+    switchWorkspace: boolean;
 }
 export interface WindowHandle {
     visitedLayouts: Set<string>;
@@ -76,7 +78,7 @@ export interface WindowHandle {
     isRestoreApplied: boolean;
     actors: Meta.WindowActor[];
 }
-export type CaptureStatus = 'saved' | 'no-rule' | 'no-window' | 'save-failed';
+export type CaptureStatus = 'saved' | 'no-rule' | 'no-window' | 'save-failed' | 'profile-linked';
 export interface CaptureRequest {
     wm_class: string;
     match_mode?: MatchMode;
