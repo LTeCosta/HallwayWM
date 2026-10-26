@@ -1,5 +1,5 @@
 import type Meta from 'gi://Meta';
-import type DejaWindowExtension from './extension.js';
+import type HallwayWMExtension from './extension.js';
 import type {GlobalDefaults, MatchRule, RestoreFlags, RestoreKey, RestoreOption, RuleState, WindowRule} from './types.js';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
@@ -73,7 +73,7 @@ function ellipsize(text: string | null) {
 }
 
 /**
- * Adds a "Deja Window" submenu to GNOME Shell's window menu (the menu shown
+ * Adds a "HallwayWM" submenu to GNOME Shell's window menu (the menu shown
  * from the title bar's right-click / Alt+Space), mirroring how extensions
  * like Tiling Shell inject items: wrap WindowMenu.prototype._buildMenu so the
  * original menu is built first, then append our own items.
@@ -83,11 +83,11 @@ function ellipsize(text: string | null) {
  * common case never needs Preferences. Only regex rules and the rest of the
  * prefs surface still require opening Settings.
  */
-export class DejaWindowMenu {
-    declare _extension: DejaWindowExtension;
+export class HallwayWMMenu {
+    declare _extension: HallwayWMExtension;
     declare _originalBuildMenu: typeof WindowMenu.WindowMenu.prototype._buildMenu | null;
 
-    constructor(extension: DejaWindowExtension) {
+    constructor(extension: HallwayWMExtension) {
         this._extension = extension;
         this._originalBuildMenu = null;
     }
@@ -110,7 +110,7 @@ export class DejaWindowMenu {
         this._originalBuildMenu = null;
     }
 
-    // Same matching rule as DejaWindowExtension._getConfigForWindow: a config
+    // Same matching rule as HallwayWMExtension._getConfigForWindow: a config
     // matches by wm_class or title (literal or regex) depending on match_mode,
     // and a disabled rule never matches (same effect as if it were deleted).
     _configMatches(config: WindowRule, wmClass: string | null, title: string | null) {
@@ -160,7 +160,7 @@ export class DejaWindowMenu {
 
         // The rule actually governing this window right now, if any: an
         // enabled config matching by literal value or regex (same priority as
-        // DejaWindowExtension._getEffectiveConfig's explicit-config lookup).
+        // HallwayWMExtension._getEffectiveConfig's explicit-config lookup).
         const activeConfig = configs.find(c => this._configMatches(c, wmClass, title));
 
         // The window menu only manages exact (non-regex) exclusion rules by
@@ -190,7 +190,7 @@ export class DejaWindowMenu {
 
     // One line describing what governs this window right now, so the switches
     // below have a subject: which pattern is matched, and by what.
-    _headerText(status: ReturnType<DejaWindowMenu['_status']>) {
+    _headerText(status: ReturnType<HallwayWMMenu['_status']>) {
         const { state, activeConfig, pattern, globalDefaults } = status;
 
         if (state === 'class' || state === 'name') {
@@ -235,7 +235,7 @@ export class DejaWindowMenu {
 
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        const submenu = new PopupMenu.PopupSubMenuMenuItem('Deja Window');
+        const submenu = new PopupMenu.PopupSubMenuMenuItem('HallwayWM');
         menu.addMenuItem(submenu);
 
         // 'restoreOpen' is the only piece of menu state that isn't backed by
@@ -375,7 +375,7 @@ export class DejaWindowMenu {
         submenu.menu.addMenuItem(moreItem);
 
         // Cap the window menu's height only while our submenu is expanded, so a
-        // collapsed "Deja Window" leaves GNOME's menu behaving exactly as it
+        // collapsed "HallwayWM" leaves GNOME's menu behaving exactly as it
         // does without the extension. This runs before PopupSubMenu.open()
         // decides whether it needs a scrollbar, which is what makes the
         // decision come out right for the initial state.

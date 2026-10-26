@@ -1,10 +1,10 @@
-# Deja Window workstation build
+# HallwayWM workstation build
 
-This branch maintains `17-workstation.9`, based on upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
+This branch maintains HallwayWM `0.1.0`, derived from Deja Window upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
 
-The build manages persistent application placement and live window layouts in one GNOME extension. It selects the first normal window per application for persistent rules, saves separate monitor-layout profiles, restores half-screen geometry correctly, and keeps rule editing available in normal window menus. It uses `deja-window@workstation.local` so catalog updates do not replace the custom build. Application identities, titles, rules and captured geometry stay in the user's private dconf database.
+The build manages persistent application placement and live window layouts in one GNOME extension. It selects the first normal window per application for persistent rules, saves separate monitor-layout profiles, restores half-screen geometry correctly, and keeps rule editing available in normal window menus. It uses `hallwaywm@workstation.local` so catalog updates do not replace the custom build. Application identities, titles, rules and captured geometry stay in the user's private dconf database.
 
-The maintained sources are `src/extension.ts`, `src/sessionLayouts.ts`, `src/windowMenu.ts` and `src/prefs.ts`. `src/types.d.ts` shares the rule, capture and monitor-profile contracts. The original GPL-3.0 license is in `LICENSE`.
+The maintained sources are `src/extension.ts`, `src/sessionLayouts.ts`, `src/windowMenu.ts` and `src/prefs.ts`. `src/types.d.ts` shares the rule, capture and monitor-profile contracts. The original GPL-3.0 license is in `LICENSE`; [project credits](CREDITS.md) identify the source projects and contributions. The stable `org.gnome.shell.extensions.deja-window` GSettings schema and private dconf path preserve existing application rules and layout profiles.
 
 Manual capture saves the currently selected normal, non-transient, taskbar-visible window, including a window excluded from automatic tracking as secondary. The title-bar menu captures its own window; preferences capture the most recently used matching window. Locked rules remain locked. Capture does not promote, move or automatically track a secondary window. Dialogs and utility surfaces remain ineligible, and capture reports failure while monitor-layout writes are suspended.
 
@@ -24,7 +24,7 @@ The build requires Node.js 22 or newer, npm and the native `glib-compile-schemas
 
 `dist/` contains the generated JavaScript, metadata, icons, license and compiled schema. It and `node_modules/` remain outside Git; TypeScript is the only maintained implementation source. The build preserves the GNOME import paths and runtime class fields. Preferences implement the asynchronous native entry point. Rules and private profiles retain their native GSettings format.
 
-Run `bash scripts/install.sh` as the desktop user after dependency installation. It builds the payload, installs regular files in `${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/deja-window@workstation.local` and compiles the installed schema. It preserves dconf preferences and does not reload the active Shell. Enable the extension and sign in again when deploying a changed build. `bash scripts/pack.sh` builds the same payload and creates the extension archive under `temp/`.
+Run `bash scripts/install.sh` as the desktop user after dependency installation. It builds the payload, installs regular files in `${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/hallwaywm@workstation.local` and compiles the installed schema. It preserves dconf preferences and does not reload the active Shell. Enable the extension and sign in again when deploying a changed build. `bash scripts/pack.sh` builds the same payload and creates the extension archive under `temp/`.
 
 Run `bash -n scripts/install.sh scripts/pack.sh` and `glib-compile-schemas --strict --dry-run src/schemas`. Installation can be checked with a temporary `XDG_DATA_HOME`. The native preferences smoke test constructs all three pages with disposable memory-backed rules and no visible window:
 

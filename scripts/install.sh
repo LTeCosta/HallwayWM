@@ -12,9 +12,11 @@ fi
 npm --prefix "$project_root" run build
 uuid="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["uuid"])' "$project_root/src/metadata.json")"
 destination="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$uuid"
-for file in extension.js sessionLayouts.js prefs.js windowMenu.js metadata.json icons/deja-window-symbolic.png icons/globe-symbolic.svg schemas/org.gnome.shell.extensions.deja-window.gschema.xml; do
+for file in extension.js sessionLayouts.js prefs.js windowMenu.js metadata.json icons/hallwaywm-symbolic.png icons/globe-symbolic.svg schemas/org.gnome.shell.extensions.deja-window.gschema.xml; do
     install -Dm644 "$project_root/dist/$file" "$destination/$file"
 done
-install -m644 "$project_root/dist/LICENSE" "$destination/LICENSE"
+for file in LICENSE CREDITS.md; do
+    install -m644 "$project_root/dist/$file" "$destination/$file"
+done
 glib-compile-schemas --strict "$destination/schemas"
 printf 'Installed %s. Sign in again to load changed JavaScript.\n' "$uuid"

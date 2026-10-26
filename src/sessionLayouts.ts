@@ -1,7 +1,7 @@
 import GLib from 'gi://GLib';
 import type Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import type DejaWindowExtension from './extension.js';
+import type HallwayWMExtension from './extension.js';
 import type {LayoutState} from './types.js';
 
 /** Keep each open window's placement for the monitor arrangements in this session. */
@@ -11,7 +11,7 @@ export class SessionLayouts {
     saveId = 0;
     private activeLayout: string;
 
-    constructor(private readonly extension: DejaWindowExtension) {
+    constructor(private readonly extension: HallwayWMExtension) {
         this.activeLayout = this.key();
         for (const actor of global.get_window_actors()) this.track(actor.meta_window);
         this.capture();

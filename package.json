@@ -1,6 +1,6 @@
 {
-  "name": "deja-window-workstation",
-  "version": "17.0.9",
+  "name": "hallwaywm",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",

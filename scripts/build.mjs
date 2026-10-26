@@ -8,8 +8,8 @@ const destination = join(root, 'dist');
 rmSync(destination, {recursive: true, force: true});
 execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '-p', join(root, 'tsconfig.json')], {stdio: 'inherit'});
 mkdirSync(destination, {recursive: true});
-for (const file of ['metadata.json', 'icons/deja-window-symbolic.png', 'icons/globe-symbolic.svg', 'schemas/org.gnome.shell.extensions.deja-window.gschema.xml']) {
+for (const file of ['metadata.json', 'icons/hallwaywm-symbolic.png', 'icons/globe-symbolic.svg', 'schemas/org.gnome.shell.extensions.deja-window.gschema.xml']) {
     cpSync(join(root, 'src', file), join(destination, file), {recursive: true});
 }
-cpSync(join(root, 'LICENSE'), join(destination, 'LICENSE'));
+for (const file of ['LICENSE', 'CREDITS.md']) cpSync(join(root, file), join(destination, file));
 execFileSync('glib-compile-schemas', ['--strict', join(destination, 'schemas')], {stdio: 'inherit'});

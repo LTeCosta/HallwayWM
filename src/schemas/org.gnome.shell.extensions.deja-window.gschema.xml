@@ -58,7 +58,7 @@
     <key name="show-indicator" type="b">
       <default>true</default>
       <summary>Show top bar indicator</summary>
-      <description>Whether to show an icon in the top bar for quick access to Deja Window settings and to toggle its functionality on/off.</description>
+      <description>Whether to show an icon in the top bar for quick access to HallwayWM settings and to toggle its functionality on/off.</description>
     </key>
 
     <!-- Logical on/off switch surfaced in the top bar indicator's menu. When false,

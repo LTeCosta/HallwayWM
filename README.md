@@ -1,130 +1,47 @@
-# Workstation build
+# HallwayWM
 
-The `workstation` branch maintains the TypeScript GNOME 51 build installed as `deja-window@workstation.local`. See [workstation operation and provenance](WORKSTATION.md). The upstream history is retained.
+Window placement and monitor-layout management for GNOME Wayland.
 
-# **Deja Window**
+HallwayWM remembers where applications belong and keeps open windows organized when monitors connect, disconnect or switch through a KVM. One extension coordinates application rules, live window layouts, workspaces and asynchronous Wayland configuration.
 
-**Deja Window** is a GNOME Shell extension that gives you full control over your window geometry. It automatically restores the workspace, size, position, minimized and maximized state, always on top and always on visible workspace of specific applications when they open.
+## Features
 
-## **🤔 Why Deja Window?**
+- Persistent position, size, monitor and workspace rules for each application's main window.
+- Per-session layouts for all normal open windows, including additional windows of the same application.
+- Independent layouts for different monitor arrangements and primary displays.
+- Maximized, minimized, fullscreen, above and sticky state restoration.
+- Workspace handling that respects GNOME's primary-monitor workspace policy.
+- A **HallwayWM** submenu in the native window menu (`Alt+Space`) for rules and manual capture.
+- Preferences with application overrides, global defaults, configuration import/export and an Active switch.
+- Window-layout retention through screen locking, with restoration deferred until unlock.
 
-In "vanilla" GNOME, windows typically open in the current workspace either centered or in a upper-left layout. This behavior stems from two main factors:
+Rules and captured application profiles remain private in the user's dconf database. Live window snapshots stay in memory and expire when their windows close or the extension is disabled. HallwayWM opens no applications.
 
-1. **GNOME's Philosophy**: The design dictates that the Window Manager (Mutter) should control window placement to avoid off-screen windows or chaotic overlaps, rather than letting individual apps decide.  
-2. **Wayland Constraints**: For security and isolation, the Wayland protocol does not natively allow applications to know their absolute global coordinates on the screen. This makes it technically impossible for most apps to "remember" and restore their own position after closing.
+## Build and install
 
-**Deja Window** bridges this gap by acting as an external memory for your window layout, forcing the desired position, size and states that the OS or the apps themselves cannot natively restore. Deja Window is also very useful for all those applications (such as Ghostty) that do not adequately manage the layout of their windows in Gnome.
+The supported environment is GNOME Shell 51, Node.js 22 or newer, npm, Python 3 and `glib-compile-schemas`.
 
-## **🚀 Features**
+From this checkout:
 
-* **Persistent Layouts**: Remembers the last known position, size (included workspace) and states (minimized and maximized, always on top and always on visible workspace) of your windows.  
-* **Granular Control**: Configure specific rules per application (via WM_CLASS or Window Title).  
-* **Flexible Matching**: Supports standard string matching and **Regular Expressions** (Regex) for advanced targeting.  
-* **Modular Restoration**: Choose to restore workspace, size, position, minimized and maximized state, always on top and always on visible workspace, independently for each app.  
-* **Multi-Monitor Support**: Automatically detects and restores windows to the exact monitor they were previously saved on.
-* **Layout Locking**: Freeze a window's saved layout to maintain your perfect configuration, preventing accidental updates when temporarily moving or resizing windows.
-* **Smart Centering**: Automatically centers windows that are configured but haven't been saved yet.  
-* **Global Defaults (Experimental)**: Optionally manage every normal window that doesn't already have its own rule, with independent restore toggles and its own exclude list for apps that should never be touched by it.
-* **Window Menu Rule Editor**: Right-click a window's title bar (or press Super+Space) for a "Deja Window" submenu holding the window's whole rule as switches — match by class or title, every restore option, lock, exclude — so it can be configured on the spot, without opening Preferences.
-* **Non-Destructive Rule Toggling**: Turn a rule off — from Preferences or from the window menu — without deleting it. Its customization is kept and restored the moment you turn it back on.
-* **Top Bar Indicator**: An optional icon in the top bar for quick access to Preferences and to pause/resume Deja Window without disabling the extension itself.
-* **Wayland Ready**: Handles the specific timing constraints of window management on Wayland.
+```sh
+npm ci --ignore-scripts --workspaces=false
+npm run check
+bash scripts/install.sh
+gnome-extensions enable hallwaywm@workstation.local
+```
 
-**Compatibility Note**: While this extension works with the majority of standard applications, some apps utilize custom layout mechanisms or non-standard toolkits that may override or ignore the extension's positioning attempts.
+Sign out and back in to discover a new local extension or load changed JavaScript. The installer preserves private settings and copies generated JavaScript and assets as regular files. Open preferences with:
 
-## **📦 Installation**
+```sh
+gnome-extensions prefs hallwaywm@workstation.local
+```
 
-### **From Source**
+`bash scripts/pack.sh` builds `temp/hallwaywm.zip`. Generated `dist/`, `node_modules/` and release archives stay outside Git. TypeScript is the maintained source.
 
-1. Clone this repository:  
-   git clone \[https://github.com/ihpled/deja-window.git\](https://github.com/ihpled/deja-window.git)
+See [operation, build validation and recovery](WORKSTATION.md) for the placement rules, session-layout lifecycle and isolated GNOME test matrix. The stable `org.gnome.shell.extensions.deja-window` settings schema preserves existing private rules and profiles.
 
-2. Move to the extension directory:  
-   cd deja-window
+## Credits and license
 
-3. Install the extension:  
-   \# Create the directory if it doesn't exist    
-   mkdir \-p \~/.local/share/gnome-shell/extensions/deja-window@mcast.gnomext.com
+HallwayWM is derived from [Deja Window](https://github.com/ihpled/deja-window) and consolidates the open-window layout behavior of [Window State Manager](https://github.com/kishorviswanathan/window-state-manager). See [CREDITS.md](CREDITS.md) for their distinct contributions and project lineage.
 
-   \# Copy files    
-   cp \-r \* \~/.local/share/gnome-shell/extensions/deja-window@mcast.gnomext.com/
-
-4. Log out and log back in (or restart GNOME Shell on X11 with Alt+F2, then r).  
-5. Enable the extension using **GNOME Extensions** or **Extension Manager**.
-
-## **⚙️ Configuration**
-
-Open the extension preferences to start managing your windows. Preferences are organized into three tabs: **Applications** (per-app rules), **Global Defaults** (experimental, opt-in defaults for everything else) and **Settings** (top bar indicator and the master Enabled switch).
-
-### **Applications tab**
-
-1. **Add New Windows**: The form at the top of the tab is the same **Match By / Regular Expression / Pattern** block used to edit a rule later (see *Matching* below), plus the **+** button that creates the rule.
-   * Pick **Match By**: WM_CLASS or Window Title.
-   * Enter the pattern of the window you want to manage.  
-   * You can find the class name or title with the list button next to the pattern (the extension auto-discovers running apps and window titles) or by using Alt+F2 and typing lg (Looking Glass) > Windows.  
-   * Example: com.mitchellh.ghostty or org.gnome.TextEditor.  
-2. **Regex Mode**:  
-   * Turn on "Regular Expression" if you want to match multiple windows with a pattern.  
-   * Example: WM_CLASS mode with .\*ghostty.\* will match any window class containing "ghostty", Window Title mode with ^DevTools.\* will match Chrome DevTools window.  
-3. **Matching**: The first row of every rule shows what it matches and lets you change it afterwards — pattern, WM_CLASS vs Window Title, and regex on/off. A rule created from the window menu always starts as an exact class or title match, so this is how you turn it into a title or regex rule later without deleting it: the rule keeps all its options, and its saved window state follows the new pattern. The only thing not allowed is an identity another rule already uses.
-4. **Restore**: One expander holding everything the rule restores — laid out like the window menu's own Restore section. Collapsed, it summarizes what's on (*"Size, Position, Workspace"*, *"Everything"*, or *"Nothing"*), so you can read a rule at a glance without opening it. An option that only refines another one is greyed out while its parent is off.
-   * **Size**: App will open with the dimensions it had when last closed.  
-   * **Position**: App will open at the exact X/Y coordinates it had when last closed (includes restoring to the correct monitor in multi-display setups).  
-   * **Avoid Overlap for Additional Windows**: If another window of this app is already sitting at the restored position, offsets this one diagonally so it doesn't land exactly on top of it. Refines *Position*; on by default.
-   * **Maximized**: App will open maximized if it was closed in that state.  
-   * **Workspace**: App will open on the workspace it was last closed on.  
-   * **Switch to Workspace**: When the app opens, the desktop will automatically switch to that workspace. Refines *Workspace*.
-   * **Minimized**: App will open minimized if it was closed in that state.  
-   * **Always on Top**: App will maintain its "Always on Top" status.  
-   * **On All Workspaces**: App will maintain its "Always on Visible Workspace" (sticky) status.
-5. **Locked**: Freezes the currently saved layout, preventing window updates or changes from being saved. While it's on, the save button next to it snapshots the app's current window (position, size, monitor, workspace and states) as that fixed layout right away (you don't have to unlock, arrange the window, wait for the automatic save and lock again).
-6. **Enabling/Disabling a Rule**: Each rule has its own switch, separate from the delete button. Turning it off has the same effect as removing it — the window is left unmanaged — but its customization is kept and comes right back when you turn it back on.
-
-### **Global Defaults tab (Experimental)**
-
-Rules applied automatically to every *normal* window that doesn't already match a rule in the Applications tab. Explicit per-app rules always take priority.
-
-* Has the same **Restore** section as a per-app rule, minus **Locked**: pinning one fixed layout for every app that has no rule of its own isn't meaningful.
-* Turning it on is gated behind a confirmation dialog, since it changes the risk model for every installed app at once rather than one app you've already tested.
-* **Excluded Apps**: windows that should never be touched by Global Defaults, even while it's enabled. They are described with the same **Match By / Regular Expression / Pattern** block as a rule, so an exclusion can target a WM_CLASS or a window title, exactly or by regex.
-
-### **Settings tab**
-
-* **Enabled**: The master switch for Deja Window. When off, the extension stays installed and active but all window tracking, restoring and saving is bypassed.
-* **Show Icon in Top Bar**: Adds an indicator to the top bar with quick access to Preferences and to the Enabled switch above.
-
-## **🖱️ Window Menu Rule Editor**
-
-Right-click a window's title bar (or press Super+Space) to open GNOME's window menu. Deja Window adds a **"Deja Window"** submenu there that is a full rule editor: the whole rule can be set up with switches, in place, without opening Preferences. The switches keep the menu open, so several of them can be flipped in one go.
-
-The first line of the submenu tells you what governs the window right now — the matched pattern and whether it was matched by class or title, or *Managed by Global Defaults* when no rule of its own applies.
-
-* **Manage this Window**: creates (or re-enables) a rule for this window, with every restore option turned on by default. Turning it off gives the window back to Global Defaults.
-* **Match by Window Title**: matches on the window's title instead of its WM_CLASS (an exact match — regex patterns are set up in Preferences). Applies to the rule when the window is managed, and to the exclusion when it's excluded.
-* **Exclude from Global Defaults**: shown when the window has no rule of its own, adds it to the Global Defaults exclude list so it stays untouched.
-* **Restore**: expands into the rule's restore options — *Size, Position, Maximized, Workspace, Switch to Workspace, Minimized, Always on Top, On All Workspaces* — the same ones as the Applications tab in Preferences. Folded away by default to keep the menu short.
-* **Lock**: stops recording this window's changes, freezing the saved state. **Save Current State Now** then pins the window's current geometry as that frozen state.
-* **More Options…**: jumps to Preferences with the rule expanded, where its **Matching** row can turn it into a title or regex rule, plus everything else the menu doesn't cover.
-
-Rules created in Preferences with a regex pattern can match many windows at once, so the menu won't retire or re-target them from a single window — it shows them as a *regex rule* and leaves those two switches disabled. The restore switches still work on them.
-
-As with the Applications tab's per-rule switch, none of these actions delete a rule — they only turn it on or off, so switching back restores any customization you'd already made.
-
-## **🛠 Troubleshooting**
-
-**Why isn't my window restoring?**
-
-* **Check the WM_CLASS/Title**: Ensure it matches exactly (or your Regex is correct).  
-* **Wayland Timing**: On Wayland, some applications may override GNOME's positioning hints during their own startup phase. Deja Window uses a delay mechanism to enforce your settings, but extremely slow apps might need a retry.  
-* **Custom Layouts**: Some applications (like certain IDEs or games) enforce their own window management logic that fights against the Window Manager. In these rare cases, the extension might not be able to force the position.
-* **Auto-maximization issue**: Sometimes, when opening large applications, the window will be automatically maximized without gaps. This might be due to a setting in Gnome which is adjustable using the dconf editor:
-/org/gnome/mutter/auto-maximize (defaults is true. If you're experiencing this issue, try setting this to false)
-The description for the setting is "Auto maximize nearly monitor sized windows". If enabled, new windows that are initially nearly the size of the monitor automatically get maximized.
-
-**How do I reset the saved positions?**
-
-* Currently, you can remove the configuration for the specific app in the settings and re-add it, or use dconf/gsettings to clear the window-app-states key.
-
-## **📄 License**
-
-Distributed under the GPL-3.0 License. See LICENSE for more information.
+The original Deja Window history and [GNU GPL version 3 license](LICENSE) are preserved.

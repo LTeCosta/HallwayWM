@@ -9,7 +9,7 @@ import sys
 from zipfile import ZIP_DEFLATED, ZipFile
 
 root = Path(sys.argv[1])
-archive = root / "temp/deja-window.zip"
+archive = root / "temp/hallwaywm.zip"
 archive.parent.mkdir(exist_ok=True)
 with ZipFile(archive, "w", compression=ZIP_DEFLATED) as output:
     for source in sorted((root / "dist").rglob("*")):

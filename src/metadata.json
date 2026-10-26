@@ -1,14 +1,14 @@
 {
-  "name": "Deja Window",
+  "name": "HallwayWM",
   "description": "Application placement and live window layouts across monitor changes.",
-  "uuid": "deja-window@workstation.local",
+  "uuid": "hallwaywm@workstation.local",
   "settings-schema": "org.gnome.shell.extensions.deja-window",
   "shell-version": [
     "51"
   ],
-  "url": "https://github.com/ihpled/deja-window",
-  "version": 17,
-  "version-name": "17-workstation.9",
+  "url": "https://github.com/LTeCosta/HallwayWM",
+  "version": 1,
+  "version-name": "0.1.0",
   "session-modes": [
     "user",
     "unlock-dialog"

@@ -7,7 +7,7 @@ import GLib from 'gi://GLib';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 type RuleFlag = RestoreKey | 'enabled' | 'locked';
-type RuleRow = Adw.ExpanderRow & {_dejaMatchWmClass: string; _dejaMatchMode: MatchMode};
+type RuleRow = Adw.ExpanderRow & {_hallwayMatchWmClass: string; _hallwayMatchMode: MatchMode};
 interface ConfigurationBackup {
     deja_window_backup?: number;
     window_app_configs?: WindowRule[];
@@ -61,12 +61,12 @@ function restoreSummary(values: RestoreFlags) {
 }
 
 /**
- * DejaWindowPreferences Class
+ * HallwayWMPreferences Class
  * 
- * Manages the settings and preferences UI for the Deja Window extension.
+ * Manages the settings and preferences UI for the HallwayWM extension.
  * Allows users to add, remove, and configure application windows to manage.
  */
-export default class DejaWindowPreferences extends ExtensionPreferences {
+export default class HallwayWMPreferences extends ExtensionPreferences {
     /**
      * Fills the preferences window with the extension settings page.
      * @param {Adw.PreferencesWindow} window - The preferences window.
@@ -158,7 +158,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         const statusRow = new Adw.ActionRow({
             title: 'Active',
-            subtitle: 'When off, Deja Window stays installed but all window tracking, restoring and saving is bypassed.'
+            subtitle: 'When off, HallwayWM stays installed but all window tracking, restoring and saving is bypassed.'
         });
         const statusSwitch = new Gtk.Switch({ valign: Gtk.Align.CENTER });
         settings.bind('functionality-enabled', statusSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
@@ -167,7 +167,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
         const indicatorGroup = new Adw.PreferencesGroup({
             title: 'Top Bar',
-            description: 'Quickly access Deja Window settings or enable/disable the extension from the top bar.'
+            description: 'Quickly access HallwayWM settings or enable/disable the extension from the top bar.'
         });
         settingsPage.add(indicatorGroup);
 
@@ -230,7 +230,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
 
             const dialog = new Gtk.FileDialog({
                 title: 'Export Configuration',
-                initial_name: 'deja-window-backup.json'
+                initial_name: 'hallwaywm-backup.json'
             });
             dialog.save(window, null, (_dlg, result) => {
                 try {
@@ -268,7 +268,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                     if (!ok) throw new Error('Could not read file');
                     data = JSON.parse(new TextDecoder().decode(bytes));
                 } catch (e) {
-                    showBackupError('The selected file is not a valid Deja Window backup.');
+                    showBackupError('The selected file is not a valid HallwayWM backup.');
                     return;
                 }
 
@@ -785,7 +785,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             if (typeof window.add_toast === 'function') {
                 window.add_toast(new Adw.Toast({ title: text, timeout: 3 }));
             } else {
-                console.log(`[DejaWindow] ${text}`);
+                console.log(`[HallwayWM] ${text}`);
             }
         };
 
@@ -809,7 +809,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             captureTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
                 captureTimeoutId = 0;
                 settings.set_string('capture-state-request', '');
-                showToast('Deja Window is not running, so the current window state could not be read.');
+                showToast('HallwayWM is not running, so the current window state could not be read.');
                 return GLib.SOURCE_REMOVE;
             });
         };
@@ -967,11 +967,11 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
                 });
                 // Identifies this row for the window menu's "Customize" action
                 // (see applyHighlightTarget below), independent of the display title.
-                (row as RuleRow)._dejaMatchWmClass = config.wm_class;
-                (row as RuleRow)._dejaMatchMode = config.match_mode || 'wm_class';
+                (row as RuleRow)._hallwayMatchWmClass = config.wm_class;
+                (row as RuleRow)._hallwayMatchMode = config.match_mode || 'wm_class';
 
                 // Lets the rule be switched off without deleting it: same
-                // effect as removing it (DejaWindowExtension._getConfigForWindow
+                // effect as removing it (HallwayWMExtension._getConfigForWindow
                 // skips disabled rules), but its customization is kept and the
                 // switch can be flipped back on to restore it. A plain suffix
                 // switch (rather than AdwExpanderRow's own enable-expansion) so
@@ -1088,7 +1088,7 @@ export default class DejaWindowPreferences extends ExtensionPreferences {
             if (!target || !target.wm_class) return;
 
             const matchMode = target.match_mode || 'wm_class';
-            const row = rows.find(r => r._dejaMatchWmClass === target.wm_class && r._dejaMatchMode === matchMode);
+            const row = rows.find(r => r._hallwayMatchWmClass === target.wm_class && r._hallwayMatchMode === matchMode);
             if (!row) return;
 
             window.set_visible_page(page);

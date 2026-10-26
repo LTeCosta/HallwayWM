@@ -8,7 +8,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import { DejaWindowMenu } from './windowMenu.js';
+import { HallwayWMMenu } from './windowMenu.js';
 import { SessionLayouts } from './sessionLayouts.js';
 import type {ApplicationStates, CaptureRequest, CaptureStatus, GlobalDefaults, LayoutState, MatchRule, PendingRestore, RestoreFlags, WindowHandle, WindowRule} from './types.js';
 
@@ -48,8 +48,8 @@ function maximizeArgs(method: {length: number}): [] | [number] {
 }
 
 /**
- * DejaWindowExtension Class
- * The main class for the "Deja Window" extension.
+ * HallwayWMExtension Class
+ * The main class for the "HallwayWM" extension.
  * This extension allows users to manage the size, position, and maximized state
  * of application windows. It supports:
  * - Saving and restoring window dimensions and position per WM_CLASS.
@@ -63,7 +63,7 @@ function maximizeArgs(method: {length: number}): [] | [number] {
  * - Live monitoring of window creation and geometry changes.
  * - Refactored to use connectObject/disconnectObject for cleaner signal management.
  */
-export default class DejaWindowExtension extends Extension {
+export default class HallwayWMExtension extends Extension {
     declare _settings: Gio.Settings | null;
     declare _handles: Map<Meta.Window, WindowHandle>;
     declare _configs: WindowRule[];
@@ -81,7 +81,7 @@ export default class DejaWindowExtension extends Extension {
     declare _adoptIdleId: number;
     declare _adoptWithoutRestore: boolean;
     declare _probes: Map<Meta.Window, number[]>;
-    declare _windowMenu: DejaWindowMenu | null;
+    declare _windowMenu: HallwayWMMenu | null;
 
     enable() {
         // Initialize settings from schema
@@ -201,8 +201,8 @@ export default class DejaWindowExtension extends Extension {
         // Initialize probes map
         this._probes = new Map();
 
-        // "Deja Window" submenu injected into GNOME's window (title bar) menu
-        this._windowMenu = new DejaWindowMenu(this);
+        // "HallwayWM" submenu injected into GNOME's window (title bar) menu
+        this._windowMenu = new HallwayWMMenu(this);
         if (!this._sessionLocked) this._windowMenu.enable();
     }
 
@@ -275,13 +275,13 @@ export default class DejaWindowExtension extends Extension {
         if (this._indicator) return;
 
         const indicator = new PanelMenu.Button(0.0, this.metadata.name, false) as PanelMenu.Button & {menu: PopupMenu.PopupMenu};
-        const iconPath = GLib.build_filenamev([this.path, 'icons', 'deja-window-symbolic.png']);
+        const iconPath = GLib.build_filenamev([this.path, 'icons', 'hallwaywm-symbolic.png']);
         indicator.add_child(new St.Icon({
             gicon: Gio.icon_new_for_string(iconPath),
             style_class: 'system-status-icon'
         }));
 
-        const settingsItem = new PopupMenu.PopupMenuItem('Deja Window Settings');
+        const settingsItem = new PopupMenu.PopupMenuItem('HallwayWM Settings');
         settingsItem.connect('activate', () => this.openPreferences());
         indicator.menu.addMenuItem(settingsItem);
 
@@ -326,7 +326,7 @@ export default class DejaWindowExtension extends Extension {
             const json = this._settings!.get_string('window-app-configs');
             this._configs = JSON.parse(json) as WindowRule[] || [];
         } catch (e) {
-            console.error('[DejaWindow] Error parsing window-app-configs:', e);
+            console.error('[HallwayWM] Error parsing window-app-configs:', e);
             this._configs = [];
         }
 
@@ -339,7 +339,7 @@ export default class DejaWindowExtension extends Extension {
             const json = this._settings!.get_string('window-global-defaults');
             this._globalDefaults = JSON.parse(json) as GlobalDefaults || {};
         } catch (e) {
-            console.error('[DejaWindow] Error parsing window-global-defaults:', e);
+            console.error('[HallwayWM] Error parsing window-global-defaults:', e);
             this._globalDefaults = {};
         }
 
@@ -364,7 +364,7 @@ export default class DejaWindowExtension extends Extension {
     _releaseIfIneligible(window: Meta.Window) {
         if (this._isValidManagedWindow(window) && this._getEffectiveConfig(window)) return false;
 
-        debug(`[DejaWindow] No longer managing: ${window.get_wm_class()} / ${window.get_title()}`);
+        debug(`[HallwayWM] No longer managing: ${window.get_wm_class()} / ${window.get_title()}`);
         this._cleanupWindow(window);
         return true;
     }
@@ -394,7 +394,7 @@ export default class DejaWindowExtension extends Extension {
         try {
             return new RegExp(config.wm_class).test(valueToCheck);
         } catch (e) {
-            console.error(`[DejaWindow] Invalid regex in rule: ${config.wm_class}`, e);
+            console.error(`[HallwayWM] Invalid regex in rule: ${config.wm_class}`, e);
             return false;
         }
     }
@@ -455,7 +455,7 @@ export default class DejaWindowExtension extends Extension {
         try {
             states = JSON.parse(this._settings.get_string('window-app-states')) || {};
         } catch (e) {
-            console.error('[DejaWindow] Error reading layout profiles:', e);
+            console.error('[HallwayWM] Error reading layout profiles:', e);
         }
         for (const [window, handle] of this._handles) {
             if (restored.has(window) || handle.visitedLayouts.has(layoutKey)) continue;
@@ -540,7 +540,7 @@ export default class DejaWindowExtension extends Extension {
             try {
                 return rule.is_regex ? new RegExp(rule.wm_class).test(valueToCheck) : rule.wm_class === valueToCheck;
             } catch (e) {
-                console.error(`[DejaWindow] Invalid regex in excluded_apps: ${rule.wm_class}`, e);
+                console.error(`[HallwayWM] Invalid regex in excluded_apps: ${rule.wm_class}`, e);
                 return false;
             }
         });
@@ -784,7 +784,7 @@ export default class DejaWindowExtension extends Extension {
         if (this._handles.has(window)) return;
         this._forgetSessionWindow(window);
 
-        debug('[DejaWindow] Setup listeners for:', identity);
+        debug('[HallwayWM] Setup listeners for:', identity);
 
         const visitedLayouts = this._windowLayouts.get(window) || new Set();
         visitedLayouts.add(this._layoutKey());
@@ -816,15 +816,15 @@ export default class DejaWindowExtension extends Extension {
         // Instead of timers, we use the Window Actor state.
         const waitForActorMap = (actor: Meta.WindowActor) => {
             if (actor.mapped) {
-                debug('[DejaWindow] Actor already mapped:', identity);
+                debug('[HallwayWM] Actor already mapped:', identity);
                 triggerRestore();
             } else {
-                debug('[DejaWindow] Waiting for Actor map:', identity);
+                debug('[HallwayWM] Waiting for Actor map:', identity);
 
                 // Connect safely using connectObject
                 actor.connectObject('notify::mapped', () => {
                     if (actor.mapped) {
-                        debug('[DejaWindow] Actor became mapped (One-shot):', identity);
+                        debug('[HallwayWM] Actor became mapped (One-shot):', identity);
 
                         // Disconnect immediately to avoid repeated calls in Overview
                         // This is safe to do here because at this stage
@@ -848,12 +848,12 @@ export default class DejaWindowExtension extends Extension {
         if (actor) {
             waitForActorMap(actor);
         } else {
-            debug('[DejaWindow] Waiting for Compositor Private (Actor):', identity);
+            debug('[HallwayWM] Waiting for Compositor Private (Actor):', identity);
             // notify::compositor-private is a signal on the WINDOW
             window.connectObject('notify::compositor-private', () => {
                 const newActor = window.get_compositor_private() as Meta.WindowActor | null;
                 if (newActor) {
-                    debug('[DejaWindow] Compositor Private (Actor) available:', identity);
+                    debug('[HallwayWM] Compositor Private (Actor) available:', identity);
                     waitForActorMap(newActor);
                 }
             }, this);
@@ -888,7 +888,7 @@ export default class DejaWindowExtension extends Extension {
             // Schedule a timeout to save the window's state
             handle.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
                 if (this._releaseIfIneligible(window)) return GLib.SOURCE_REMOVE;
-                debug('[DejaWindow] Window changed (debounced):', identity);
+                debug('[HallwayWM] Window changed (debounced):', identity);
                 // Capture geometry and flags together after Wayland has settled.
                 const rect = window.get_frame_rect();
                 const isMaximized = window.is_maximized();
@@ -908,7 +908,7 @@ export default class DejaWindowExtension extends Extension {
 
         // Helper to handle window unmanaging. Saves the window's state.
         const handleWindowUnmanaging = () => {
-            debug('[DejaWindow] Window unmanaged:', identity);
+            debug('[HallwayWM] Window unmanaged:', identity);
             // Last save before closing (skipped while bypassed)
             if (this._functionalityEnabled && handle.isRestoreApplied) {
                 const rect = window.get_frame_rect();
@@ -978,7 +978,7 @@ export default class DejaWindowExtension extends Extension {
             // still managed and can receive geometry while the actor is hidden.
             const actor = window.get_compositor_private() as Meta.WindowActor | null;
             if (!actor) {
-                debug(`[DejaWindow] Window ${identity} actor not ready in idle, skipping...`);
+                debug(`[HallwayWM] Window ${identity} actor not ready in idle, skipping...`);
                 return GLib.SOURCE_REMOVE;
             }
 
@@ -1000,12 +1000,12 @@ export default class DejaWindowExtension extends Extension {
             try {
                 savedStates = JSON.parse(this._settings!.get_string('window-app-states')) || {};
             } catch (e) {
-                console.error('[DejaWindow] Error reading window-app-states:', e);
+                console.error('[HallwayWM] Error reading window-app-states:', e);
             }
 
             // Get saved state for this window
             const state = sessionState ?? savedStates[identity]?.layouts?.[this._layoutKey()] ?? {};
-            debug('[DejaWindow] Restoring state for:', identity, state);
+            debug('[HallwayWM] Restoring state for:', identity, state);
             const rect = window.get_frame_rect();
 
             // Retrieve target dimensions
@@ -1068,7 +1068,7 @@ export default class DejaWindowExtension extends Extension {
                 if (targetY > workArea.y + workArea.height - 50) targetY = workArea.y + workArea.height - 50;
             }
 
-            debug(`[DejaWindow] Applying State for ${identity}: ${targetW}x${targetH} @ ${targetX},${targetY}`);
+            debug(`[HallwayWM] Applying State for ${identity}: ${targetW}x${targetH} @ ${targetX},${targetY}`);
 
             if (sessionState && window.fullscreen) window.unmake_fullscreen();
             const hasMaximizedAxis = window.maximized_horizontally || window.maximized_vertically;
@@ -1093,7 +1093,7 @@ export default class DejaWindowExtension extends Extension {
                 handle.restoreTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
                     handle.restoreTimeoutId = 0;
                     this._cancelRestore(handle);
-                    console.warn('[DejaWindow] Target monitor did not settle; automatic saving remains paused for this window.');
+                    console.warn('[HallwayWM] Target monitor did not settle; automatic saving remains paused for this window.');
                     return GLib.SOURCE_REMOVE;
                 });
             }
@@ -1217,7 +1217,7 @@ export default class DejaWindowExtension extends Extension {
     _performSave(identity: string, monitorIndex: number, x: number, y: number, w: number, h: number, config: RestoreFlags, isMaximized: boolean, workspaceIndex: number, minimized: boolean, above: boolean, sticky: boolean) {
         if (!this._settings || this._sessionLocked || GLib.get_monotonic_time() < this._layoutSaveAfter) return false;
 
-        debug(`[DejaWindow] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
+        debug(`[HallwayWM] Saving State for ${identity}: ${w}x${h} @ ${x},${y}`);
 
         let savedStates: ApplicationStates = {};
         try {
