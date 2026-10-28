@@ -10,7 +10,9 @@
   "scripts": {
     "check": "tsc --noEmit",
     "build": "node scripts/build.mjs",
-    "test:profiles": "node tests/display-profiles.mjs"
+    "test:profiles": "node tests/display-profiles.mjs",
+    "test:integration": "python3 tests/integration.py",
+    "test:preferences": "bash tests/preferences.sh"
   },
   "devDependencies": {
     "typescript": "6.0.3",

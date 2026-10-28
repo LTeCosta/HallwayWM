@@ -1,10 +1,10 @@
-# HallwayWM workstation build
+# HallwayWM development and validation
 
-This branch maintains HallwayWM `0.2.1`, derived from Deja Window upstream commit `c2cac5444a1bd56e6a287f0d688728cfea4bf7c4` and GNOME Extensions release 17. The release archive SHA-256 is `3842806146a7193d4caab3c3b0ed78c163214a4269a09d29cd51deafcb4e3a17`.
+HallwayWM is a standalone GNOME Shell extension. Its build, tests and installation use this checkout and the native dependencies described below. Run the commands from the project root.
 
-The build manages persistent application placement and live window layouts in one GNOME extension. It selects the first normal window per application for persistent rules, saves separate monitor-layout profiles, restores half-screen geometry correctly, and keeps rule editing available in normal window menus. It uses `hallwaywm@workstation.local` so catalog updates do not replace the custom build. Application identities, titles, rules and captured geometry stay in the user's private dconf database.
+The build manages persistent application placement and live window layouts in one GNOME extension. It selects the first normal window per application for persistent rules, saves separate monitor-layout profiles, restores half-screen geometry correctly, and keeps rule editing available in normal window menus. Its extension identity is `hallwaywm@ltecosta.github.io`. Application identities, titles, rules and captured geometry stay in the user's private dconf database.
 
-The placement engine is in `src/extension.ts` and `src/sessionLayouts.ts`. `src/displayProfiles.ts` supplies profile identity, copying and linked resolution; `src/profileManager.ts` integrates native monitor discovery and profile actions. `src/profilePreferences.ts`, `src/prefs.ts` and `src/windowMenu.ts` implement the native controls, sharing restore terminology through `src/restoreOptions.ts`. `src/types.d.ts` shares the rule, capture and monitor-profile contracts. The original GPL-3.0 license is in `LICENSE`; [project credits](CREDITS.md) identify the source projects and contributions. The stable `org.gnome.shell.extensions.deja-window` GSettings schema and private dconf path preserve existing application rules and layout profiles.
+The placement engine is in `src/extension.ts` and `src/sessionLayouts.ts`. `src/displayProfiles.ts` supplies profile identity, copying and linked resolution; `src/profileManager.ts` integrates native monitor discovery and profile actions. `src/profilePreferences.ts`, `src/prefs.ts` and `src/windowMenu.ts` implement the native controls, sharing restore terminology through `src/restoreOptions.ts`. `src/types.d.ts` shares the rule, capture and monitor-profile contracts. The original GPL-3.0 license is in [LICENSE](../LICENSE); [project credits](../CREDITS.md) identify the source projects and contributions. The stable `org.gnome.shell.extensions.deja-window` GSettings schema and private dconf path preserve existing application rules and layout profiles.
 
 Manual capture saves the currently selected normal, non-transient, taskbar-visible window, including a window excluded from automatic tracking as secondary. The title-bar menu captures its own window; preferences capture the most recently used matching window. Locked rules remain locked. Capture does not promote, move or automatically track a secondary window. Dialogs and utility surfaces remain ineligible, and capture reports failure while monitor-layout writes are suspended.
 
@@ -34,18 +34,32 @@ The build requires Node.js 22 or newer, npm and the native `glib-compile-schemas
 
 `dist/` contains the generated JavaScript, metadata, icons, license and compiled schema. It and `node_modules/` remain outside Git; TypeScript is the only maintained implementation source. The build preserves the GNOME import paths and runtime class fields. Preferences implement the asynchronous native entry point. Rules and private profiles retain their native GSettings format.
 
-Run `bash scripts/install.sh` as the desktop user after dependency installation. It builds the payload, installs regular files in `${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/hallwaywm@workstation.local` and compiles the installed schema. It preserves dconf preferences and does not reload the active Shell. After the first installation, sign out and back in so GNOME discovers the extension, then enable it with `gnome-extensions enable hallwaywm@workstation.local`. Subsequent JavaScript updates also require a new graphical login. `bash scripts/pack.sh` builds the same payload and creates the extension archive under `temp/`.
+Run `bash scripts/install.sh` as the desktop user after dependency installation. It builds the payload, installs regular files in `${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/hallwaywm@ltecosta.github.io` and compiles the installed schema. It preserves dconf preferences and does not reload the active Shell. After the first installation, sign out and back in so GNOME discovers the extension, then enable it with `gnome-extensions enable hallwaywm@ltecosta.github.io`. Subsequent JavaScript updates also require a new graphical login. `bash scripts/pack.sh` builds the same payload and creates the extension archive under `temp/`.
 
-Run `bash -n scripts/install.sh scripts/pack.sh` and `glib-compile-schemas --strict --dry-run src/schemas`. Installation can be checked with a temporary `XDG_DATA_HOME`. The native preferences smoke test constructs all four pages with disposable memory-backed rules and no visible window:
+Run `bash -n scripts/install.sh scripts/pack.sh` and `glib-compile-schemas --strict --dry-run src/schemas`. Installation can be checked with a temporary `XDG_DATA_HOME`. The native preferences smoke test requires GJS, GTK 4, libadwaita, D-Bus and an accessible graphical session. It discovers GNOME Shell libraries from the installation; set `GNOME_SHELL_LIBDIR` for a custom library location. It constructs all four pages using isolated D-Bus, temporary configuration directories and memory-backed rules, without showing a window:
 
 ```sh
-GI_TYPELIB_PATH=/usr/lib/gnome-shell/girepository-1.0 LD_LIBRARY_PATH=/usr/lib/gnome-shell GSETTINGS_BACKEND=memory gjs -m tests/preferences.mjs
+npm run test:preferences
 ```
 
-The workstation repository's `tests/gnome_window_state_manager_integration.py` builds the pinned sources, verifies every payload hash and exercises the unified extension alone in an isolated GNOME session. The base workload covers seven Wayland/XWayland windows, repeated KVM transitions, primary-monitor changes, lock-mode monitor changes and immediate capture on enable. Its `--placement`, `--half-screen`, `--main-window`, `--workspaces` and `--profiles` cases cover persistence, monitor transitions and window eligibility. The profile workload covers Save & Lock with explicit and default-managed apps, queued-save cancellation, manual resaving, reopen restoration, unlock learning, exclusion preservation, separate notebook/docked records, saved-profile priority, equal geometry with another simulated device identity, copy/link/detach actions and proportional monitor mapping. `npm run test:profiles` tests identity, geometry and linked-template semantics without a Shell. Physical monitor/KVM acceptance remains a separate check.
+The self-contained `tests/integration.py` suite builds this checkout and exercises HallwayWM alone in an isolated GNOME session. It reads the local extension metadata and uses explicit disposable preferences. It accepts uncommitted source changes for development. Run the base workload or select a scenario:
+
+```sh
+npm run test:profiles
+npm run test:integration
+npm run test:integration -- --placement
+npm run test:integration -- --half-screen
+npm run test:integration -- --main-window
+npm run test:integration -- --workspaces
+npm run test:integration -- --profiles
+```
+
+The native integration suite requires GNOME Shell 51 with headless virtual monitors, D-Bus, Python 3 with PyGObject, GTK 3/4, XWayland and software rendering. Browser scenarios use a Chromium-compatible executable discovered on `PATH`; set `HALLWAYWM_TEST_BROWSER` to select one explicitly. Missing required dependencies fail the selected check rather than count as a successful test. Temporary XDG directories, a separate D-Bus session, disposable windows and a private browser profile isolate the fixture from the desktop session. Test processes and temporary files are cleaned up after completion.
+
+The base workload covers repeated monitor transitions, primary-monitor changes, changes while locked and immediate capture on enable. The placement modes cover persistence, half-screen geometry, main-window eligibility and workspaces. The profile workload covers Save & Lock, queued-save cancellation, explicit resaving, reopening, unlock learning, exclusions, separate display records, saved-profile priority, equal geometry with distinct device identities, copy/link/detach actions and proportional monitor mapping. Virtual monitor sizes and application identities are deterministic fixtures. Physical monitor/KVM acceptance and a fresh graphical login remain separate checks.
 
 JavaScript syntax is checked with the installed GJS parser (`Reflect.parse` with `target: "module"`); the isolated integration suite validates the Shell imports and behavior.
 
 ## Visual identity
 
-The panel uses the supplied `hallwaywm-tray-dark.png` and `hallwaywm-tray-light.png` variants, selecting them from the panel icon's effective foreground color. The preferences show `hallwaywm.png`; the README uses the supplied wordmark in dark mode and the application icon in light mode. Assets are copied unchanged from the supplied identity pack and recorded in [credits](CREDITS.md).
+The panel uses the supplied `hallwaywm-tray-dark.png` and `hallwaywm-tray-light.png` variants, selecting them from the panel icon's effective foreground color. The preferences show `hallwaywm.png`; the README uses the supplied wordmark in dark mode and the application icon in light mode. Assets are copied unchanged from the supplied identity pack and recorded in [credits](../CREDITS.md).

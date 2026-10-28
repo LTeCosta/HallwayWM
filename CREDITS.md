@@ -1,10 +1,10 @@
 # HallwayWM credits
 
-HallwayWM brings together the application-placement and monitor-layout behavior developed in the workstation's customized Deja Window and Window State Manager solutions.
+HallwayWM combines persistent application placement with live monitor-layout restoration, building on the projects credited below.
 
 ## Deja Window
 
-[Deja Window](https://github.com/ihpled/deja-window), by its original authors and contributors, supplies the codebase from which HallwayWM is derived. Application rules, preferences, the native window-menu integration and the global-defaults globe icon originate in that project. Its Git history and GPL-3.0 license are retained. The workstation fork added TypeScript, per-layout profiles, primary-monitor workspace handling and robust asynchronous Wayland placement.
+[Deja Window](https://github.com/ihpled/deja-window), by its original authors and contributors, supplies the codebase from which HallwayWM is derived. Application rules, preferences, the native window-menu integration and the global-defaults globe icon originate in that project. Its Git history and GPL-3.0 license are retained. HallwayWM adds TypeScript, per-layout profiles, primary-monitor workspace handling and asynchronous Wayland placement.
 
 ## Window State Manager
 
@@ -12,7 +12,7 @@ HallwayWM brings together the application-placement and monitor-layout behavior 
 
 ## HallwayWM
 
-Lucas Costa maintains HallwayWM and its workstation integration. Contributions to the unified layout engine, lifecycle handling, integration tests and project identity are covered by the GPL-3.0 license in `LICENSE`.
+Lucas Costa maintains HallwayWM. Contributions to the unified layout engine, lifecycle handling, integration tests and project identity are covered by the GPL-3.0 license in `LICENSE`.
 
 ## Visual identity
 

@@ -5,23 +5,28 @@ import Gtk from 'gi://Gtk';
 
 if (GLib.getenv('GSETTINGS_BACKEND') !== 'memory')
     throw new Error('Run with GSETTINGS_BACKEND=memory to isolate test preferences');
-const resource = Gio.Resource.load('/usr/share/gnome-shell/org.gnome.Shell.Extensions.src.gresource');
-Gio.resources_register(resource);
-const directory = Gio.File.new_for_path(ARGV[0] ?? GLib.build_filenamev([GLib.get_current_dir(), 'dist']));
+const resourcePath = GLib.get_system_data_dirs()
+    .map(path => GLib.build_filenamev([path, 'gnome-shell', 'org.gnome.Shell.Extensions.src.gresource']))
+    .find(path => GLib.file_test(path, GLib.FileTest.IS_REGULAR));
+if (!resourcePath)
+    throw new Error('The GNOME Shell extensions resource is missing from XDG_DATA_DIRS');
+Gio.resources_register(Gio.Resource.load(resourcePath));
+const project = Gio.File.new_for_uri(import.meta.url).get_parent().get_parent();
+const directory = ARGV[0] ? Gio.File.new_for_path(ARGV[0]) : project.get_child('dist');
 const [, data] = directory.get_child('metadata.json').load_contents(null);
 const metadata = JSON.parse(new TextDecoder().decode(data));
 const {default: Preferences} = await import(directory.get_child('prefs.js').get_uri());
 Adw.init();
 const preferences = new Preferences({...metadata, dir: directory, path: directory.get_path()});
 const settings = preferences.getSettings();
-settings.set_value('known-wm-classes', new GLib.Variant('as', ['org.workstation.PreferenceTest']));
+settings.set_value('known-wm-classes', new GLib.Variant('as', ['org.hallwaywm.PreferenceTest']));
 settings.set_value('known-window-titles', new GLib.Variant('as', ['Disposable title']));
 settings.set_string('window-app-configs', JSON.stringify([
-    {wm_class: 'org.workstation.PreferenceTest', enabled: true, locked: true, restore_size: true},
+    {wm_class: 'org.hallwaywm.PreferenceTest', enabled: true, locked: true, restore_size: true},
     {wm_class: 'Disposable title', match_mode: 'title', enabled: false, restore_workspace: true},
 ]));
 settings.set_string('window-global-defaults', JSON.stringify({enabled: true, restore_pos: true,
-    excluded_apps: [{wm_class: 'org.workstation.Excluded', match_mode: 'wm_class'}]}));
+    excluded_apps: [{wm_class: 'org.hallwaywm.Excluded', match_mode: 'wm_class'}]}));
 const screen = (id, name, primary) => ({id, name, primary, builtin: false, index: 0,
     scale: 1, geometry: {x: 0, y: 0, width: 1920, height: 1080},
     workArea: {x: 0, y: 32, width: 1920, height: 1048}});

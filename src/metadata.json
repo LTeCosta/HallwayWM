@@ -1,7 +1,7 @@
 {
   "name": "HallwayWM",
   "description": "Application placement and live window layouts across monitor changes.",
-  "uuid": "hallwaywm@workstation.local",
+  "uuid": "hallwaywm@ltecosta.github.io",
   "settings-schema": "org.gnome.shell.extensions.deja-window",
   "shell-version": [
     "51"

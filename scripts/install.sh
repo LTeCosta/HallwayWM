@@ -10,7 +10,7 @@ if (( $# )); then
     exit 2
 fi
 npm --prefix "$project_root" run build
-uuid="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["uuid"])' "$project_root/src/metadata.json")"
+uuid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uuid"])' "$project_root/src/metadata.json")"
 destination="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$uuid"
 for file in extension.js sessionLayouts.js displayProfiles.js profileManager.js profilePreferences.js restoreOptions.js prefs.js windowMenu.js metadata.json icons/hallwaywm.png icons/hallwaywm-tray-dark.png icons/hallwaywm-tray-light.png icons/globe-symbolic.svg schemas/org.gnome.shell.extensions.deja-window.gschema.xml; do
     install -Dm644 "$project_root/dist/$file" "$destination/$file"

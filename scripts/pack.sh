@@ -3,7 +3,7 @@ set -euo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 npm --prefix "$project_root" run build
-python - "$project_root" <<'PY'
+python3 - "$project_root" <<'PY'
 from pathlib import Path
 import sys
 from zipfile import ZIP_DEFLATED, ZipFile

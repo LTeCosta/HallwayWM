@@ -46,9 +46,11 @@ Device identity uses the monitor's vendor, product and serial information. A con
 
 The supported environment is GNOME Shell 51, Node.js 22 or newer, npm, Python 3 and `glib-compile-schemas`.
 
-From this checkout:
+Clone the project and install its locked development dependencies:
 
 ```sh
+git clone https://github.com/LTeCosta/HallwayWM.git
+cd HallwayWM
 npm ci --ignore-scripts --workspaces=false
 npm run check
 bash scripts/install.sh
@@ -57,15 +59,15 @@ bash scripts/install.sh
 The installer preserves private settings and copies generated JavaScript and assets as regular files. After the first installation, sign out and back in so GNOME discovers the extension, then enable it and open preferences:
 
 ```sh
-gnome-extensions enable hallwaywm@workstation.local
-gnome-extensions prefs hallwaywm@workstation.local
+gnome-extensions enable hallwaywm@ltecosta.github.io
+gnome-extensions prefs hallwaywm@ltecosta.github.io
 ```
 
-Sign out and back in after subsequent updates to load changed JavaScript.
+Sign out and back in after subsequent updates to load changed JavaScript. Run one extension that manages these application rules at a time; disable another build before enabling HallwayWM. The installer preserves the shared settings schema and leaves extension activation under your control.
 
 `bash scripts/pack.sh` builds `temp/hallwaywm.zip`. Generated `dist/`, `node_modules/` and release archives stay outside Git. TypeScript is the maintained source.
 
-See [operation, build validation and recovery](WORKSTATION.md) for the placement rules, session-layout lifecycle and isolated GNOME test matrix. The stable `org.gnome.shell.extensions.deja-window` settings schema preserves existing private rules and profiles.
+See [development and validation](docs/DEVELOPMENT.md) for the placement rules, session-layout lifecycle and the self-contained GNOME test suite. The stable `org.gnome.shell.extensions.deja-window` settings schema preserves existing private rules and profiles.
 
 ## Credits and license
 

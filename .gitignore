@@ -10,3 +10,7 @@ temp/
 node_modules/
 dist/
 *.tsbuildinfo
+
+# Python test bytecode.
+__pycache__/
+*.pyc
